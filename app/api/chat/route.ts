@@ -23,23 +23,37 @@ export async function POST(request: Request) {
   }
 
   let messages;
-  try {
-    const body = await request.json();
-    messages = await validateUIMessages({ messages: body.messages });
-    const lastMessage = messages.at(-1);
-    if (
-      !lastMessage || lastMessage.role !== "user" ||
-      !lastMessage.parts.some((part) => part.type === "text" && part.text.trim()) ||
-      messages.some((message) =>
+try {
+  const body = await request.json();
+  messages = await validateUIMessages({ messages: body.messages });
+  const lastMessage = messages.at(-1);
+
+  if (
+    !lastMessage ||
+    lastMessage.role !== "user" ||
+    !lastMessage.parts.some(
+      (part) => part.type === "text" && part.text.trim()
+    ) ||
+    messages.some(
+      (message) =>
         !["user", "assistant"].includes(message.role) ||
-        message.parts.some((part) => part.type !== "text")
-      )
-    ) {
-      return new Response("Wpisz niepustą wiadomość tekstową.", { status: 400 });
-    }
-  } catch {
-    return new Response("Nieprawidłowa historia rozmowy. Odśwież stronę i spróbuj ponownie.", { status: 400 });
+        message.parts.some(
+          (part) =>
+            part.type !== "text" &&
+            !(message.role === "assistant" && part.type === "step-start")
+        )
+    )
+  ) {
+    return new Response("Wpisz niepustą wiadomość tekstową.", {
+      status: 400,
+    });
   }
+} catch {
+  return new Response(
+    "Nieprawidłowa historia rozmowy. Odśwież stronę i spróbuj ponownie.",
+    { status: 400 }
+  );
+}
 
   try {
     const openrouter = createOpenRouter({ apiKey });
