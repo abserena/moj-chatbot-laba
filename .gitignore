@@ -1,0 +1,16 @@
+node_modules/
+.next/
+*.tsbuildinfo
+.env*
+# Sekrety lokalne (objęte także regułą powyżej).
+.env
+.env.local
+!.env.example
+/work/
+/outputs/
+.vercel/
+*.log
+*.pem
+*.key
+*.p12
+*.pfx
