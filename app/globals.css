@@ -15,3 +15,21 @@ input { flex: 1; min-width: 0; padding: 14px; border: 1px solid #aeb9cb; border-
 button { padding: 14px 22px; border: 0; border-radius: 8px; background: #3159d9; color: white; font: inherit; font-weight: 600; cursor: pointer; }
 button:disabled { opacity: 0.5; cursor: default; }
 input:focus-visible, button:focus-visible { outline: 3px solid #91aaff; outline-offset: 3px; }
+textarea { flex: 1; min-width: 0; resize: vertical; padding: 14px; border: 1px solid #aeb9cb; border-radius: 8px; font: inherit; }
+textarea:focus-visible { outline: 3px solid #91aaff; outline-offset: 3px; }
+.mode-switch { display: flex; flex-wrap: wrap; gap: 8px; margin: 24px 0 16px; }
+.mode-switch button[aria-pressed="false"] { background: #e0e5f0; color: #172033; }
+.capability { font-size: 14px; margin-bottom: 16px; padding: 12px; border: 1px solid #d9dfeb; border-radius: 8px; overflow-wrap: anywhere; }
+.capability p { margin: 8px 0 0; }
+.capability button { margin-top: 10px; }
+.analysis-result { white-space: normal; }
+.analysis-result dl { margin: 0; }
+.analysis-result dt { margin-top: 12px; font-size: 13px; font-weight: bold; }
+.analysis-result dd { margin: 4px 0 0; }
+.analysis-result .draft { white-space: pre-wrap; }
+.analysis-result details { margin-top: 16px; }
+.analysis-result summary { cursor: pointer; }
+.analysis-result pre { margin-top: 8px; }
+.priority-high { color: #a62020; font-weight: bold; }
+.cancel { margin-top: 12px; }
+@media (max-width: 520px) { .composer { flex-direction: column; } .message { max-width: 100%; } }

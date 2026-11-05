@@ -1,5 +1,6 @@
-import { jsonSchema, NoObjectGeneratedError } from "ai";
+import { APICallError, jsonSchema, NoObjectGeneratedError, UnsupportedFunctionalityError } from "ai";
 import type { UIMessage } from "ai";
+import { unsupportedAnalysisMessage } from "./model-capabilities";
 
 export type StudioNovaResult = {
   category: "sales" | "support" | "billing" | "unknown";
@@ -8,7 +9,7 @@ export type StudioNovaResult = {
   needs_review: boolean;
 };
 
-export type StudioNovaMessage = UIMessage<unknown, { preview: { delta: string } }>;
+export type StudioNovaMessage = UIMessage<unknown, { preview: { delta: string }; analysis: StudioNovaResult }>;
 
 const categories = ["sales", "support", "billing", "unknown"];
 const priorities = ["normal", "high"];
@@ -42,8 +43,8 @@ export const resultSchema = jsonSchema<StudioNovaResult>({
 });
 
 export class ResultError extends Error {
-  readonly code: "refusal" | "truncated" | "format" | "aborted";
-  constructor(code: "refusal" | "truncated" | "format" | "aborted") {
+  readonly code: "refusal" | "truncated" | "format" | "aborted" | "unsupported";
+  constructor(code: "refusal" | "truncated" | "format" | "aborted" | "unsupported") {
     super(code);
     this.code = code;
   }
@@ -66,8 +67,15 @@ export function resultErrorMessage(error: unknown): string {
       case "truncated": return "Odpowiedź została ucięta przez limit modelu. Nie zapisano częściowego JSON. Spróbuj krótszego pytania lub skontaktuj się z pracownikiem.";
       case "format": return "Odpowiedź ma nieprawidłowy format JSON lub nie spełnia schematu. Nie zapisano wyniku. Spróbuj ponownie.";
       case "aborted": return "Generowanie zostało przerwane. Nie zapisano wyniku. Spróbuj ponownie.";
+      case "unsupported": return unsupportedAnalysisMessage;
     }
   }
+  if (UnsupportedFunctionalityError.isInstance(error)) return unsupportedAnalysisMessage;
+  if (APICallError.isInstance(error)) {
+    // Wskazujemy brak obsługi parametrów, nie ujawniając surowej treści błędu.
+    if ([400, 404, 422].includes(error.statusCode ?? 0) && /response_format|json_schema|structured.?output|support.*parameter|no endpoints.*(found|available)/i.test(error.message)) return unsupportedAnalysisMessage;
+  }
+  if (error instanceof Error && error.name === "AbortError") return resultErrorMessage(new ResultError("aborted"));
   if (NoObjectGeneratedError.isInstance(error)) return resultErrorMessage(new ResultError("format"));
   return "Nie udało się uzyskać wyniku. Sprawdź konfigurację, dostępność modelu obsługującego JSON Schema i saldo OpenRouter, a następnie spróbuj ponownie.";
 }
