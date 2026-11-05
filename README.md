@@ -125,6 +125,26 @@ oraz `@openrouter/ai-sdk-provider@2.9.1`; bieżąca strona AI SDK opisuje już v
 
 ## Publikacja na GitHub i Vercel
 
+### Lokalna próba prompt injection
+
+`npm run test:injection` powtarza próbę po zabezpieczeniach na fikcyjnych danych,
+bez modelu i bez odczytu sekretów. Atrapa HTTP podaje poprawny schematycznie
+wynik z niedozwoloną ceną 1 zł; backend musi zwrócić błąd w strumieniu,
+bez `data-analysis`. Osobno sprawdzane są obce pola żądania i poprawna cena 150 zł.
+
+Serwer akceptuje tylko pola transportu `messages`, `mode`, `id`, `trigger`,
+`messageId`. Instrukcja systemowa, model i schemat nie są przyjmowane od klienta.
+Wiadomość do analizy jest kodowana jako dane w `client_message`; instrukcja
+wyraźnie zabrania wykonywania fałszywych poleceń SYSTEM/developer w tym polu.
+Po walidacji schematu backend sprawdza zapisane liczbowo kwoty zł/PLN w szkicu.
+Jedyna zweryfikowana kwota to 150 zł; inną odrzuca bez tworzenia zastępczego wyniku.
+To konserwatywna kontrola: także cytowana inna kwota zwrotu wymaga pracownika
+i nie zostanie zatwierdzona. Nie obejmuje dowolnych słownych parafraz kwot
+ani wszystkich możliwych naruszeń zasad. Próba nie dowodzi pełnej odporności
+prawdziwego modelu ani skuteczności samej instrukcji.
+
+### Wdrożenie
+
 Publikuj wyłącznie we własnym repozytorium. Zachowaj `package-lock.json`.
 Nie dodawaj `.env.local`, innych plików `.env` z wartościami ani `.vercel`.
 Jedynym szablonem w repozytorium jest `.env.example` z pustymi polami.

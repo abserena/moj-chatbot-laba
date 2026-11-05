@@ -52,7 +52,7 @@ function moduleCode(path, names) {
     .replace(/\bexport /g, '') + `\nmodule.exports = {${names.join(',')}};`;
 }
 const schemaModule = { exports: {} };
-vm.runInNewContext(moduleCode('../app/lib/result-schema.ts', ['resultSchema', 'ResultError', 'hasRefusal', 'resultErrorMessage']), {
+vm.runInNewContext(moduleCode('../app/lib/result-schema.ts', ['assertAnalysisPolicy', 'resultSchema', 'ResultError', 'hasRefusal', 'resultErrorMessage', 'studioNovaFacts']), {
   module: schemaModule, Error,
   require(id) {
     if (id === 'ai') return ai;
@@ -117,12 +117,15 @@ const invalidResults = [
   { ...valid, needs_review: 'false' }, { ...valid, category: 'marketing' },
   { ...valid, send_now: true }, { ...valid, priority: 'urgent' }, { ...valid, draft: 123 }, null, [],
 ];
+const audit = [];
+const invalidLabels = ['Brak draft', 'needs_review jako tekst "false"', 'category: marketing', 'Dodatkowe send_now'];
 for (const value of invalidResults) assert.equal((await resultSupport.resultSchema.validate(value)).success, false);
-for (const invalid of [...invalidResults.map(value => JSON.stringify(value)), '{bad json', 'Nie mogę odpowiedzieć.']) {
+for (const [index, invalid] of [...invalidResults.map(value => JSON.stringify(value)), '{bad json', 'Nie mogę odpowiedzieć.'].entries()) {
   scenario = { text: invalid };
   const parts = await events();
   assert.match(parts.find(part => part.type === 'error').errorText, /format JSON|schematu/);
   assert.equal(parts.some(part => part.type === 'data-analysis'), false, 'Błędny wynik nie trafia do historii');
+  if (index < invalidLabels.length) audit.push({ przypadek: invalidLabels[index], HTTP: 200, zdarzenie: 'error', wynik_analizy: 'brak', ocena: 'ODRZUCONY' });
 }
 for (const [settings, expected] of [
   [{ finish: 'length', text: '{"category":' }, /ucięta/],
@@ -130,6 +133,7 @@ for (const [settings, expected] of [
   [{ finish: 'content_filter', text: '' }, /odmówił/],
   [{ refusal: true }, /odmówił/],
   [{ missingFinish: true }, /przerwane/],
+  [{ missingFinish: true, text: '{"category":"sales","priority":' }, /przerwane/],
   [{ unsupportedProvider: true }, /OPENROUTER_MODEL/],
   [{ httpError: true }, /Nie udało się uzyskać wyniku/],
   [{ streamError: true }, /Nie udało się uzyskać wyniku/],
@@ -138,6 +142,8 @@ for (const [settings, expected] of [
   const parts = await events();
   assert.match(parts.find(part => part.type === 'error').errorText, expected);
   assert.equal(parts.some(part => part.type === 'data-analysis'), false);
+  if (settings.refusal || settings.finish === 'content_filter') audit.push({ przypadek: settings.refusal ? 'Odmowa delta.refusal' : 'Odmowa content_filter', HTTP: 200, zdarzenie: 'error', wynik_analizy: 'brak', ocena: 'ODRZUCONY' });
+  if (settings.missingFinish && settings.text) audit.push({ przypadek: 'Przerwanie po fragmencie JSON, bez zakończenia', HTTP: 200, zdarzenie: 'error', wynik_analizy: 'brak', ocena: 'ODRZUCONY' });
 }
 
 scenario = {};
@@ -174,6 +180,12 @@ const getResponse = await module.exports.GET(new Request('http://localhost/api/c
 assert.equal((await getResponse.json()).supported, true);
 
 scenario = {};
+const sdkRequest = await module.exports.POST(new Request('http://localhost/api/chat', {
+  method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ mode: 'analysis', messages: [user], id: 'sdk-test', trigger: 'submit-message', messageId: 'u1' }),
+}));
+assert.equal(sdkRequest.status, 200);
+assert.match(await sdkRequest.text(), /data-analysis/);
 const callsBeforeInvalid = requests.length;
 for (const messages of [
   [], [text('empty', 'user', '  ')], [user, assistant],
@@ -183,6 +195,12 @@ for (const messages of [
 ]) assert.equal((await post(messages)).status, 400);
 assert.equal((await post([user], 'invalid')).status, 400);
 assert.equal((await post([user], null)).status, 400);
+for (const draft of ['Cena 1 zł.', 'Cena 1 PLN.', 'Cena PLN 1.', 'Cena 150,01 zł.', 'Cena 1 150 zł.']) {
+  assert.throws(() => resultSupport.assertAnalysisPolicy({ ...valid, draft }));
+}
+for (const draft of ['Cena 150 zł brutto.', 'Cena 150,00 PLN.', 'Cena PLN 150.', 'Kwota zwrotu wymaga sprawdzenia przez pracownika.']) {
+  assert.doesNotThrow(() => resultSupport.assertAnalysisPolicy({ ...valid, draft }));
+}
 authAllowed = false;
 assert.equal((await post()).status, 401);
 assert.equal((await module.exports.GET(new Request('http://localhost/api/chat'))).status, 401);
@@ -193,4 +211,5 @@ originAllowed = true;
 fakeEnv.OPENROUTER_API_KEY = '';
 assert.equal((await post()).status, 503);
 assert.equal(requests.length, callsBeforeInvalid);
+console.table(audit);
 console.log('OK: osobne tryby czatu i analizy, JSON Schema, walidacja, streaming, historia, odmowa, ucięcie/przerwanie, błędy HTTP/formatu, możliwości modelu, brak fallbacku i 401/403/503. Wyłącznie lokalne atrapy HTTP.');

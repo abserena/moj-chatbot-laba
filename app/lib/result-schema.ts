@@ -11,6 +11,8 @@ export type StudioNovaResult = {
 
 export type StudioNovaMessage = UIMessage<unknown, { preview: { delta: string }; analysis: StudioNovaResult }>;
 
+export const studioNovaFacts = { consultationPricePLN: 150, consultationMinutes: 45 } as const;
+
 const categories = ["sales", "support", "billing", "unknown"];
 const priorities = ["normal", "high"];
 const fields = ["category", "priority", "draft", "needs_review"];
@@ -43,10 +45,27 @@ export const resultSchema = jsonSchema<StudioNovaResult>({
 });
 
 export class ResultError extends Error {
-  readonly code: "refusal" | "truncated" | "format" | "aborted" | "unsupported";
-  constructor(code: "refusal" | "truncated" | "format" | "aborted" | "unsupported") {
+  readonly code: "refusal" | "truncated" | "format" | "aborted" | "unsupported" | "policy";
+  constructor(code: "refusal" | "truncated" | "format" | "aborted" | "unsupported" | "policy") {
     super(code);
     this.code = code;
+  }
+}
+
+export function assertAnalysisPolicy(result: StudioNovaResult): void {
+  // Jedyną zweryfikowaną kwotą firmy jest cena konsultacji. Inne kwoty
+  // wymagają pracownika; nie wolno ich publikować jako gotowego szkicu.
+  // Jest to wąska kontrola zapisu liczbowego, nie detektor wszystkich injection.
+  const amount = String.raw`(\d+(?:[ \u00a0\u202f]\d{3})*(?:[.,]\d+)?)`;
+  const patterns = [
+    new RegExp(amount + String.raw`\s*(?:z[lł](?:ot(?:y|e|ych))?|PLN)(?![a-ząćęłńóśźż0-9])`, "gi"),
+    new RegExp(String.raw`\bPLN\s*` + amount, "gi"),
+  ];
+  for (const pattern of patterns) {
+    for (const match of result.draft.matchAll(pattern)) {
+      const value = Number(match[1].replace(/[ \u00a0\u202f]/g, "").replace(",", "."));
+      if (value !== studioNovaFacts.consultationPricePLN) throw new ResultError("policy");
+    }
   }
 }
 
@@ -68,6 +87,7 @@ export function resultErrorMessage(error: unknown): string {
       case "format": return "Odpowiedź ma nieprawidłowy format JSON lub nie spełnia schematu. Nie zapisano wyniku. Spróbuj ponownie.";
       case "aborted": return "Generowanie zostało przerwane. Nie zapisano wyniku. Spróbuj ponownie.";
       case "unsupported": return unsupportedAnalysisMessage;
+      case "policy": return "Wynik jest niezgodny ze zweryfikowanymi zasadami firmy. Nie zatwierdzono analizy ani szkicu. Sprawę powinien sprawdzić pracownik.";
     }
   }
   if (UnsupportedFunctionalityError.isInstance(error)) return unsupportedAnalysisMessage;
