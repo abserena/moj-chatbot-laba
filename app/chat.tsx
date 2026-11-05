@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
+import type { StudioNovaMessage } from "./lib/result-schema";
 
 const transport = new DefaultChatTransport({
   api: "/api/chat",
@@ -20,7 +21,15 @@ const transport = new DefaultChatTransport({
 export default function Chat() {
   const [logoutError, setLogoutError] = useState("");
   const [message, setMessage] = useState("");
-  const { messages, sendMessage, status, error, clearError } = useChat({ transport });
+  const [preview, setPreview] = useState("");
+  const { messages, sendMessage, status, error, clearError } = useChat<StudioNovaMessage>({
+    transport,
+    onData(part) {
+      if (part.type === "data-preview") setPreview((text) => text + part.data.delta);
+    },
+    onFinish: () => setPreview(""),
+    onError: () => setPreview(""),
+  });
   const isBusy = status === "submitted" || status === "streaming";
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -28,6 +37,7 @@ export default function Chat() {
     const text = message.trim();
     if (!text || isBusy) return;
     clearError();
+    setPreview("");
     void sendMessage({ text });
     setMessage("");
   }
@@ -48,10 +58,18 @@ export default function Chat() {
           <div className={`message ${item.role}`} key={item.id}>
             <strong>{item.role === "user" ? "Ty" : "Chatbot"}</strong>
             {item.parts.map((part, index) =>
-              part.type === "text" ? <span key={index}>{part.text}</span> : null
+              part.type === "text" ? (
+                item.role === "assistant" ? <pre key={index}>{part.text}</pre> : <span key={index}>{part.text}</span>
+              ) : null
             )}
           </div>
         ))}
+        {isBusy && preview && (
+          <div className="message assistant">
+            <strong>Podgląd JSON — trwa generowanie i walidacja</strong>
+            <pre>{preview}</pre>
+          </div>
+        )}
       </section>
       {isBusy && (
         <p role="status">{status === "submitted" ? "Czekam na odpowiedź…" : "Chatbot pisze…"}</p>
