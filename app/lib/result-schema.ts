@@ -9,7 +9,14 @@ export type StudioNovaResult = {
   needs_review: boolean;
 };
 
-export type StudioNovaMessage = UIMessage<{ fetchedAt?: string }, { preview: { delta: string }; analysis: StudioNovaResult }>;
+export type StudioNovaMessage = UIMessage<
+  { fetchedAt?: string; usedTools?: ("web_search" | "aktualnyCzas")[] },
+  { preview: { delta: string }; analysis: StudioNovaResult },
+  {
+    aktualnyCzas: { input: Record<string, never>; output: { data: string; dzienTygodnia: string; godzina: string; strefa: string } };
+    web_search: { input: unknown; output: unknown };
+  }
+>;
 
 export const studioNovaFacts = { consultationPricePLN: 150, consultationMinutes: 45 } as const;
 

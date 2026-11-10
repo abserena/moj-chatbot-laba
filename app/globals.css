@@ -32,4 +32,6 @@ textarea:focus-visible { outline: 3px solid #91aaff; outline-offset: 3px; }
 .analysis-result pre { margin-top: 8px; }
 .priority-high { color: #a62020; font-weight: bold; }
 .cancel { margin-top: 12px; }
+.tool-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; white-space: normal; }
+.tool-badge { padding: 3px 8px; border-radius: 12px; background: #e0e5f0; color: #27344d; font-size: 12px; }
 @media (max-width: 520px) { .composer { flex-direction: column; } .message { max-width: 100%; } }

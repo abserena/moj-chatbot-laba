@@ -2,6 +2,19 @@
 
 ## Wyszukiwanie i źródła
 
+W zwykłym czacie dostępna jest również funkcja `aktualnyCzas`. Nie przyjmuje
+argumentów; zwraca datę, dzień tygodnia, godzinę i strefę `Europe/Warsaw`,
+z uwzględnieniem czasu letniego. Model powinien jej używać przy pytaniach
+o „dziś”, „jutro”, godzinę i liczbę dni do podanej daty. Wynik funkcji wraca
+do modelu w kolejnym kroku, przed wygenerowaniem odpowiedzi.
+
+Nad odpowiedzią pojawiają się etykiety faktycznie użytych narzędzi:
+„🕒 aktualnyCzas” i „🔎 wyszukiwanie”. Każda nazwa jest pokazywana raz.
+Wyszukiwanie natywne może nie emitować wywołania narzędzia; w takim przypadku
+etykieta wynika ze źródeł otrzymanych od dostawcy. Bez sygnału użycia narzędzia
+nie ma etykiet. Historia zachowuje wywołania i wyniki funkcji; przerwane,
+niedokończone wywołania są pomijane przy konwersji do wiadomości modelu.
+
 Zwykły czat udostępnia narzędzie `openrouter.tools.webSearch` z `maxResults: 3`
 i `engine: "native"`. Model musi obsługiwać natywne wyszukiwanie (np. Google
 Search w zgodnym modelu Gemini). AI SDK 6 używa `stepCountIs`, importowanego

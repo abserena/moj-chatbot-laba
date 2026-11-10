@@ -13,6 +13,8 @@ const fakeEnv = { OPENROUTER_API_KEY: 'test-only', OPENROUTER_MODEL: 'test/model
 let scenario = {};
 let authAllowed = true;
 let originAllowed = true;
+let clockNow = '2026-11-10T23:30:00.000Z';
+class TestDate extends Date { constructor(value = clockNow) { super(value); } }
 const requests = [];
 const errorLogs = [];
 async function fakeFetch(_url, options) {
@@ -28,14 +30,21 @@ async function fakeFetch(_url, options) {
     assert.equal(request.provider.require_parameters, true);
     assert.equal(request.tools, undefined, 'Analiza pozostaje bez wyszukiwania');
   } else {
-    assert.deepEqual(request.tools, [{ type: 'openrouter:web_search', max_results: 3, engine: 'native' }]);
+    assert.deepEqual(request.tools[0], { type: 'openrouter:web_search', max_results: 3, engine: 'native' });
+    assert.equal(request.tools[1].type, 'function');
+    assert.equal(request.tools[1].function.name, 'aktualnyCzas');
+    assert.equal(request.tools[1].function.parameters.additionalProperties, false);
   }
   assert.equal(request.messages[0].role, 'system');
   assert.match(JSON.stringify(request.messages[0].content), /Studio Nova/);
-  assert.equal(request.messages.at(-1).role, 'user');
+  assert.equal(request.messages.at(-1).role, scenario.clock && request.messages.at(-1).role === 'tool' ? 'tool' : 'user');
   if (scenario.unsupportedProvider) return Response.json({ error: { message: 'No endpoints found that support response_format json_schema', code: 404 } }, { status: 404 });
   if (scenario.httpError) return Response.json({ error: { message: 'private-provider-detail', code: scenario.httpStatus ?? 400 } }, { status: scenario.httpStatus ?? 400 });
   const chunk = (delta, finish_reason = null) => ({ id: 'mock', model: 'test/model', choices: [{ index: 0, delta, finish_reason }] });
+  if (scenario.clock && request.messages.at(-1).role === 'user') {
+    const body = [chunk({ role: 'assistant', tool_calls: [{ index: 0, id: `clock-${requests.length}`, type: 'function', function: { name: 'aktualnyCzas', arguments: '{}' } }] }), chunk({}, 'tool_calls')];
+    return new Response(body.map(value => `data: ${JSON.stringify(value)}\n\n`).join('') + 'data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
+  }
   const text = scenario.text ?? (request.response_format ? JSON.stringify(valid) : 'Konsultacja trwa 45 minut i kosztuje 150 zł brutto.');
   const middle = Math.floor(text.length / 2);
   const chunks = [
@@ -77,7 +86,7 @@ async function fakeCatalogFetch(url, options) {
 }
 const module = { exports: {} };
 vm.runInNewContext(moduleCode('../app/api/chat/route.ts', ['POST', 'GET']), {
-  module, Request, Response, Error,
+  module, Request, Response, Error, Date: TestDate,
   console: { error: line => errorLogs.push(JSON.parse(line)) },
   process: { env: fakeEnv },
   require(id) {
@@ -175,11 +184,34 @@ const sourcedEvents = await events([user], 'chat');
 assert.ok(sourcedEvents.some(part => part.type === 'source-url' && part.url === 'https://nbp.pl/' && part.title === 'Narodowy Bank Polski'));
 const fetchedAt = sourcedEvents.find(part => part.type === 'message-metadata')?.messageMetadata.fetchedAt;
 assert.ok(Number.isFinite(Date.parse(fetchedAt)), 'Czas otrzymania źródeł pochodzi z serwera');
+assert.ok(sourcedEvents.some(part => part.type === 'message-metadata' && part.messageMetadata.usedTools.includes('web_search')));
 const historyWithSource = { id: 'web-answer', role: 'assistant', metadata: { fetchedAt }, parts: [
   { type: 'text', text: 'Odpowiedź ze źródłem' },
   { type: 'source-url', sourceId: 'nbp', url: 'https://nbp.pl/', title: 'Narodowy Bank Polski' },
 ] };
 assert.ok((await events([user, historyWithSource, text('follow-up', 'user', 'Podaj więcej informacji')], 'chat')).some(part => part.type === 'source-url'));
+scenario = { clock: true };
+const callsBeforeClock = requests.length;
+const clockEvents = await events([text('clock-user', 'user', 'Jaki dzień jest jutro?')], 'chat');
+assert.equal(requests.length - callsBeforeClock, 2, 'Model otrzymuje wynik funkcji i odpowiada w następnym kroku');
+const clockResult = clockEvents.find(part => part.type === 'tool-output-available');
+assert.deepEqual(clockResult.output, { data: '11.11.2026', dzienTygodnia: 'środa', godzina: '00:30:00', strefa: 'Europe/Warsaw' }, 'Warszawa ma już następny dzień, niezależnie od strefy serwera');
+assert.ok(clockEvents.some(part => part.type === 'message-metadata' && part.messageMetadata.usedTools.includes('aktualnyCzas')));
+assert.ok(clockEvents.some(part => part.type === 'text-delta'));
+const clockHistory = { id: 'clock-answer', role: 'assistant', parts: [
+  { type: 'tool-aktualnyCzas', toolCallId: clockResult.toolCallId, input: {}, state: 'output-available', output: clockResult.output },
+  { type: 'text', text: 'Dziś jest środa.' },
+] };
+await events([user, clockHistory, text('clock-follow-up', 'user', 'A za ile dni będzie piątek?')], 'chat');
+clockNow = '2026-07-01T22:30:00.000Z';
+const summerEvents = await events([user], 'chat');
+assert.deepEqual(summerEvents.find(part => part.type === 'tool-output-available').output, { data: '02.07.2026', dzienTygodnia: 'czwartek', godzina: '00:30:00', strefa: 'Europe/Warsaw' }, 'Uwzględnia czas letni');
+scenario = { clock: true, sources: true };
+const bothEvents = await events([user], 'chat');
+assert.deepEqual(bothEvents.filter(part => part.type === 'message-metadata').at(-1).messageMetadata.usedTools, ['aktualnyCzas', 'web_search'], 'Obie etykiety w jednej odpowiedzi');
+scenario = {};
+const noToolEvents = await events([user], 'chat');
+assert.equal(noToolEvents.some(part => part.type === 'message-metadata' && part.messageMetadata.usedTools?.length), false, 'Bez użycia narzędzia nie ma etykiety');
 scenario = {};
 for (const [httpStatus, expected] of [[400, /parametrów/], [401, /klucz API/], [402, /budżet/], [403, /zablokowany/], [404, /nie jest dostępny/], [429, /limit zapytań/], [503, /błąd dostawcy/]]) {
   scenario = { httpError: true, httpStatus };

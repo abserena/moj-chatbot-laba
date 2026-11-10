@@ -100,6 +100,12 @@ function ChatPanel({ mode, active }: { mode: Mode; active: boolean }) {
         {messages.map((item) => (
           <div className={`message ${item.role}`} key={item.id}>
             <strong>{item.role === "user" ? (analysis ? "Wiadomość klienta" : "Ty") : (analysis ? "Analiza Studio Nova" : "Chatbot")}</strong>
+            {item.role === "assistant" && (item.metadata?.usedTools?.length ?? 0) > 0 && (
+              <div className="tool-badges" aria-label="Użyte narzędzia">
+                {item.metadata?.usedTools?.includes("web_search") && <small className="tool-badge">🔎 wyszukiwanie</small>}
+                {item.metadata?.usedTools?.includes("aktualnyCzas") && <small className="tool-badge">🕒 aktualnyCzas</small>}
+              </div>
+            )}
             {item.parts.map((part, index) => {
               if (part.type === "data-analysis") return <AnalysisResult key={index} result={part.data} />;
               return part.type === "text" ? <span key={index}>{part.text}</span> : null;
