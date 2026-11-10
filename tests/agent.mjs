@@ -33,6 +33,7 @@ async function fakeFetch(_url, options) {
     return Response.json({ id: 'analysis', model: 'actual/analyze-model', choices: [{ index: 0, message: { role: 'assistant', content, ...(scenario.refusal ? { refusal: 'private-provider-detail' } : {}) }, finish_reason: scenario.finish ?? 'stop' }] });
   }
   assert.ok(req.tools.some(item => item.type === 'openrouter:web_search' && item.engine === 'native' && item.max_results === 3));
+  assert.match(JSON.stringify(req.messages[0].content), /najpierw zbierz potrzebne informacje/);
   const tools = req.tools.filter(item => item.type === 'function').map(item => item.function.name);
   assert.ok(tools.includes('aktualnyCzas'));
   const last = req.messages.at(-1);
@@ -42,13 +43,14 @@ async function fakeFetch(_url, options) {
   }
   const chunk = (delta, finish_reason = null) => ({ id: 'chat', model: 'actual/chat-model', choices: [{ index: 0, delta, finish_reason }] });
   let chunks;
-  if (scenario.loop || ((scenario.image || scenario.clock || scenario.imageError) && last.role === 'user')) {
+  const continueLoop = scenario.loop && !(scenario.naturalFifth && req.messages.filter(item => item.role === 'tool').length >= 4);
+  if (continueLoop || ((scenario.image || scenario.clock || scenario.imageError) && last.role === 'user')) {
     const image = scenario.image || scenario.imageError;
     if (scenario.fixedPrompt && last.role === 'user') assert.equal(req.tool_choice.function.name, 'generujObraz');
     const names = scenario.parallel && image ? ['generujObraz', 'generujObraz'] : [image ? 'generujObraz' : 'aktualnyCzas'];
-    chunks = [chunk({ role: 'assistant', tool_calls: names.map((name, index) => ({ index, id: `call-${requests.length}-${index}`, type: 'function', function: { name, arguments: image ? JSON.stringify({ prompt: 'Ilustracja konsultacji online' }) : '{}' } })) }), chunk({}, 'tool_calls')];
+    chunks = [chunk({ role: 'assistant', ...(scenario.partialText ? { content: 'Zbieram dane.' } : {}), tool_calls: names.map((name, index) => ({ index, id: `call-${requests.length}-${index}`, type: 'function', function: { name, arguments: image ? JSON.stringify({ prompt: 'Ilustracja konsultacji online' }) : '{}' } })) }), chunk({}, 'tool_calls')];
   } else {
-    chunks = [chunk({ role: 'assistant', content: 'Odpowiedź po użyciu narzędzi.' }), ...(scenario.sources ? [chunk({ annotations: [{ type: 'url_citation', url_citation: { url: 'https://nbp.pl/', title: 'NBP', start_index: 0, end_index: 5 } }] })] : []), chunk({}, 'stop')];
+    chunks = [chunk({ role: 'assistant', content: 'Odpowiedź po użyciu narzędzi.' }), ...(scenario.sources ? Array.from({ length: scenario.duplicateSources ? 2 : 1 }, () => chunk({ annotations: [{ type: 'url_citation', url_citation: { url: 'https://nbp.pl/', title: 'NBP', start_index: 0, end_index: 5 } }] })) : []), chunk({}, 'stop')];
   }
   return new Response(chunks.map(item => `data: ${JSON.stringify(item)}\n\n`).join('') + 'data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
 }
@@ -101,11 +103,22 @@ for (const config of [{ invalidJson: '{bad' }, { result: { ...valid, needs_revie
   const text = await response.text(); assert.ok(!text.includes('private-provider-detail') && !text.includes(env.OPENROUTER_API_KEY));
 }
 scenario = { unsupported: true }; const before = requests.length; assert.equal((await post('analyze')).status, 422); assert.equal(requests.length, before);
-scenario = { clock: true, sources: true };
+scenario = { clock: true, sources: true, duplicateSources: true };
 const clock = await events();
 assert.ok(clock.some(item => item.type === 'tool-output-available' && item.output.strefa === 'Europe/Warsaw'));
 assert.ok(clock.some(item => item.type === 'source-url' && item.title === 'NBP'));
-scenario = { loop: true }; const loopStart = requests.length; await events(); assert.equal(requests.length - loopStart, 5, 'Limit pięciu kroków');
+const trace = items => items.filter(item => item.messageMetadata?.toolUses).at(-1)?.messageMetadata.toolUses;
+const limited = items => items.find(item => item.type === 'finish')?.messageMetadata?.stepLimitReached;
+assert.deepEqual(trace(clock).map(item => [item.name, item.step]), [['aktualnyCzas', 1], ['web_search', 2]], 'Kolejność rzeczywistego użycia i jeden wpis dla źródeł w tym samym kroku');
+scenario = { loop: true }; const loopStart = requests.length; const loop = await events(); assert.equal(requests.length - loopStart, 5, 'Limit pięciu kroków');
+assert.equal(limited(loop), true, 'Nawet przy braku tekstu przeglądarka dostaje komunikat o limicie');
+assert.equal(loop.some(item => item.type === 'text-delta'), false);
+assert.deepEqual(trace(loop).map(item => item.step), [1, 2, 3, 4, 5], 'Każde ponowne wywołanie dostaje etykietę');
+assert.equal(new Set(trace(loop).map(item => item.callId)).size, 5);
+scenario = { loop: true, partialText: true }; assert.equal(limited(await events()), true, 'Limit jest widoczny również po częściowej odpowiedzi');
+scenario = { loop: true, naturalFifth: true }; const naturalStart = requests.length; const natural = await events();
+assert.equal(requests.length - naturalStart, 5); assert.equal(limited(natural), false, 'Normalny finał w piątym kroku nie jest przerwaniem');
+scenario = {}; const plain = await events(); assert.deepEqual(trace(plain), []); assert.equal(limited(plain), false);
 scenario = { image: true, parallel: true, fixedPrompt: 'Studio Nova test' };
 const imageStart = requests.length; const images = await events([user], { imagePrompt: scenario.fixedPrompt });
 assert.equal(requests.slice(imageStart).filter(req => req.modalities).length, 1, 'Równoległe wywołania nie powielają kosztu obrazu');

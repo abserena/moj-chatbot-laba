@@ -10,9 +10,11 @@ export type StudioNovaResult = {
 };
 
 export type GeneratedImageResult = { generated: boolean; url?: string; modelId?: string; error?: string };
+export type AgentToolName = "web_search" | "aktualnyCzas" | "generujObraz";
+export type AgentToolUse = { name: AgentToolName; callId: string; step: number };
 
 export type StudioNovaMessage = UIMessage<
-  { fetchedAt?: string; usedTools?: ("web_search" | "aktualnyCzas" | "generujObraz")[]; modelId?: string; vision?: boolean; generatedImage?: boolean },
+  { fetchedAt?: string; usedTools?: AgentToolName[]; toolUses?: AgentToolUse[]; stepLimitReached?: boolean; modelId?: string; vision?: boolean; generatedImage?: boolean },
   { preview: { delta: string }; analysis: StudioNovaResult },
   {
     aktualnyCzas: { input: Record<string, never>; output: { data: string; dzienTygodnia: string; godzina: string; strefa: string } };

@@ -9,6 +9,7 @@ import type { AnalysisCapability } from "./lib/model-capabilities";
 
 type Mode = "chat" | "analyze";
 const categoryLabels = { sales: "Oferta i cena", support: "Problem techniczny", billing: "Płatność lub zwrot", unknown: "Nierozpoznana sprawa" };
+const toolLabels = { web_search: "🔎 wyszukiwanie", aktualnyCzas: "🕒 aktualnyCzas", generujObraz: "🎨 generowanie obrazu" };
 const imageSuggestions = [
   { label: "Konsultacja online", prompt: "Minimalistyczna grafika dla Studio Nova: przyjazna konsultacja online, laptop na jasnym biurku, ciepłe światło, spokojne kolory, bez napisów." },
   { label: "Pomoc klientom", prompt: "Ilustracja dla Studio Nova: życzliwy konsultant pomaga klientowi podczas wideorozmowy, nowoczesny i profesjonalny styl, niebieskie akcenty, bez napisów." },
@@ -182,11 +183,9 @@ function ChatPanel({ mode, active }: { mode: Mode; active: boolean }) {
         {messages.map((item) => (
           <div className={`message ${item.role}`} key={item.id}>
             <strong>{item.role === "user" ? (analysis ? "Wiadomość klienta" : "Ty") : (analysis ? "Analiza Studio Nova" : "Chatbot")}</strong>
-            {item.role === "assistant" && (item.metadata?.usedTools?.length ?? 0) > 0 && (
+            {item.role === "assistant" && (item.metadata?.toolUses?.length ?? 0) > 0 && (
               <div className="tool-badges" aria-label="Użyte narzędzia">
-                {item.metadata?.usedTools?.includes("web_search") && <small className="tool-badge">🔎 wyszukiwanie</small>}
-                {item.metadata?.usedTools?.includes("aktualnyCzas") && <small className="tool-badge">🕒 aktualnyCzas</small>}
-                {item.metadata?.usedTools?.includes("generujObraz") && <small className="tool-badge">🎨 generowanie obrazu</small>}
+                {item.metadata?.toolUses?.map((toolUse, index) => <small className="tool-badge" key={toolUse.callId}>{index + 1}. {toolLabels[toolUse.name]}</small>)}
               </div>
             )}
             {item.parts.map((part, index) => {
@@ -208,6 +207,7 @@ function ChatPanel({ mode, active }: { mode: Mode; active: boolean }) {
               </div>;
               return part.type === "text" ? <span key={index}>{part.text}</span> : null;
             })}
+            {item.role === "assistant" && item.metadata?.stepLimitReached && <p className="step-limit-notice" role="status">Przerwałem po 5 krokach</p>}
             {item.role === "assistant" && (item.metadata?.vision || item.metadata?.generatedImage) && item.metadata.modelId && <small className="model-caption">Model: {item.metadata.modelId}</small>}
             {item.role === "assistant" && item.parts.some((part) => part.type === "source-url" && /^https?:\/\//i.test(part.url)) && (
               <section aria-label="Źródła">

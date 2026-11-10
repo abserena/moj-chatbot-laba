@@ -2,6 +2,14 @@
 
 ## Wspólny endpoint agenta
 
+Nad każdą odpowiedzią czatu etykiety narzędzi są numerowane według kolejności
+sygnałów ich użycia. Ponowne wywołania są osobnymi etykietami; wiele źródeł
+z natywnego wyszukiwania w tym samym kroku nie powiela etykiety. Gdy limit pięciu
+kroków zatrzyma dalszą pracę po narzędziach, interfejs wyświetla „Przerwałem po
+5 krokach”, także przy braku tekstu odpowiedzi. Normalne zakończenie odpowiedzi
+w piątym kroku nie pokazuje tego komunikatu. Przy zadaniu złożonym instrukcja
+wymaga najpierw zebrania informacji i sprawdzenia źródeł, a dopiero potem tworzenia.
+
 POST `/api/agent` najpierw sprawdza sesję, następnie Origin i dane żądania.
 `mode: "chat"` zwraca strumień UI z `streamText`, źródłami, zdjęciami i narzędziami
 `web_search`, `aktualnyCzas` oraz `generujObraz`. Limit to `isStepCount(5)`
@@ -65,7 +73,8 @@ o „dziś”, „jutro”, godzinę i liczbę dni do podanej daty. Wynik funkcj
 do modelu w kolejnym kroku, przed wygenerowaniem odpowiedzi.
 
 Nad odpowiedzią pojawiają się etykiety faktycznie użytych narzędzi:
-„🕒 aktualnyCzas” i „🔎 wyszukiwanie”. Każda nazwa jest pokazywana raz.
+„🕒 aktualnyCzas”, „🔎 wyszukiwanie” i „🎨 generowanie obrazu”, w kolejności
+użycia. Ponowne wywołanie narzędzia dostaje osobną numerowaną etykietę.
 Wyszukiwanie natywne może nie emitować wywołania narzędzia; w takim przypadku
 etykieta wynika ze źródeł otrzymanych od dostawcy. Bez sygnału użycia narzędzia
 nie ma etykiet. Historia zachowuje wywołania i wyniki funkcji; przerwane,
