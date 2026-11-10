@@ -39,4 +39,9 @@ textarea:focus-visible { outline: 3px solid #91aaff; outline-offset: 3px; }
 .model-caption { display: block; margin-top: 8px; color: #4a566b; overflow-wrap: anywhere; }
 .media-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
 .media-actions small { flex-basis: 100%; color: #4a566b; }
+.image-suggestions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
+.image-suggestions small { flex-basis: 100%; color: #4a566b; }
+.image-suggestions button { padding: 8px 12px; font-size: 13px; background: #e0e5f0; color: #172033; }
+.download-image { display: inline-block; margin-top: 8px; padding: 8px 14px; border-radius: 8px; background: #3159d9; color: white; text-decoration: none; font-size: 14px; font-weight: 600; white-space: normal; }
+.download-image:focus-visible { outline: 3px solid #91aaff; outline-offset: 3px; }
 @media (max-width: 520px) { .composer { flex-direction: column; } .message { max-width: 100%; } }

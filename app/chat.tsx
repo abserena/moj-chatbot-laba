@@ -9,6 +9,11 @@ import type { AnalysisCapability } from "./lib/model-capabilities";
 
 type Mode = "chat" | "analysis";
 const categoryLabels = { sales: "Oferta i cena", support: "Problem techniczny", billing: "Płatność lub zwrot", unknown: "Nierozpoznana sprawa" };
+const imageSuggestions = [
+  { label: "Konsultacja online", prompt: "Minimalistyczna grafika dla Studio Nova: przyjazna konsultacja online, laptop na jasnym biurku, ciepłe światło, spokojne kolory, bez napisów." },
+  { label: "Pomoc klientom", prompt: "Ilustracja dla Studio Nova: życzliwy konsultant pomaga klientowi podczas wideorozmowy, nowoczesny i profesjonalny styl, niebieskie akcenty, bez napisów." },
+  { label: "Zaproszenie do Studio Nova", prompt: "Grafika do mediów społecznościowych Studio Nova: przytulne domowe biuro gotowe do konsultacji online, laptop, roślina i notatnik, elegancki styl, bez napisów." },
+];
 
 async function preparePhoto(file: File): Promise<FileUIPart> {
   if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) throw new Error("Wybierz zdjęcie JPG, PNG lub WebP.");
@@ -77,6 +82,8 @@ function ChatPanel({ mode, active }: { mode: Mode; active: boolean }) {
   const [imageBusy, setImageBusy] = useState(false);
   const [mediaError, setMediaError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
+  const messageInput = useRef<HTMLTextAreaElement>(null);
+  const generationInFlight = useRef(false);
   const transport = useMemo(() => new DefaultChatTransport<StudioNovaMessage>({
     api: "/api/chat", body: { mode }, fetch: sessionFetch,
     prepareSendMessagesRequest: ({ messages, body }) => {
@@ -102,8 +109,9 @@ function ChatPanel({ mode, active }: { mode: Mode; active: boolean }) {
 
   async function generatePicture() {
     const prompt = message.trim();
-    if (isBusy || !prompt) return;
+    if (isBusy || generationInFlight.current || !prompt) return;
     if ([...prompt].length > 500) { setMediaError("Opis obrazu może mieć najwyżej 500 znaków."); return; }
+    generationInFlight.current = true;
     setMediaError(""); clearError(); setImageBusy(true);
     try {
       const response = await sessionFetch("/api/image", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt }) });
@@ -116,7 +124,7 @@ function ChatPanel({ mode, active }: { mode: Mode; active: boolean }) {
       ]);
       setMessage("");
     } catch (error) { setMediaError(error instanceof Error ? error.message : "Nie udało się wygenerować obrazu."); }
-    finally { setImageBusy(false); }
+    finally { generationInFlight.current = false; setImageBusy(false); }
   }
 
   useEffect(() => {
@@ -139,7 +147,7 @@ function ChatPanel({ mode, active }: { mode: Mode; active: boolean }) {
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = message.trim();
-    if (!text || isBusy || (analysis && (checking || capability?.supported !== true))) return;
+    if (!text || isBusy || generationInFlight.current || (analysis && (checking || capability?.supported !== true))) return;
     clearError();
     setMediaError("");
     setPreview("");
@@ -173,7 +181,10 @@ function ChatPanel({ mode, active }: { mode: Mode; active: boolean }) {
             )}
             {item.parts.map((part, index) => {
               if (part.type === "data-analysis") return <AnalysisResult key={index} result={part.data} />;
-              if (part.type === "file" && /^data:image\/(jpeg|png|webp);base64,/.test(part.url)) return <img key={index} className={item.metadata?.generatedImage ? "generated-image" : "photo-thumbnail"} src={part.url} alt={item.metadata?.generatedImage ? "Wygenerowany obraz" : "Wysłane zdjęcie"} />;
+              if (part.type === "file" && /^data:image\/(jpeg|png|webp);base64,/.test(part.url)) return <div key={index}>
+                <img className={item.metadata?.generatedImage ? "generated-image" : "photo-thumbnail"} src={part.url} alt={item.metadata?.generatedImage ? "Wygenerowany obraz" : "Wysłane zdjęcie"} />
+                {item.metadata?.generatedImage && <a className="download-image" href={part.url} download={`studio-nova-${item.id}.${part.mediaType === "image/jpeg" ? "jpg" : part.mediaType === "image/webp" ? "webp" : "png"}`}>Pobierz</a>}
+              </div>;
               return part.type === "text" ? <span key={index}>{part.text}</span> : null;
             })}
             {item.role === "assistant" && (item.metadata?.vision || item.metadata?.generatedImage) && item.metadata.modelId && <small className="model-caption">Model: {item.metadata.modelId}</small>}
@@ -200,15 +211,22 @@ function ChatPanel({ mode, active }: { mode: Mode; active: boolean }) {
       <form onSubmit={handleSubmit}>
         <label htmlFor={`message-${mode}`}>{analysis ? "Wiadomość klienta do analizy" : "Wiadomość"}</label>
         <div className="composer">
-          <textarea id={`message-${mode}`} rows={analysis ? 4 : 2} value={message} onChange={(event) => setMessage(event.target.value)} placeholder={analysis ? "Wklej wiadomość klienta…" : "Napisz wiadomość…"} autoComplete="off" disabled={isBusy} />
+          <textarea ref={messageInput} id={`message-${mode}`} rows={analysis ? 4 : 2} value={message} onChange={(event) => setMessage(event.target.value)} placeholder={analysis ? "Wklej wiadomość klienta…" : "Napisz wiadomość…"} autoComplete="off" disabled={isBusy} />
           <button type="submit" disabled={isBusy || !message.trim() || (analysis && (checking || capability?.supported !== true))}>{analysis ? "Analizuj" : "Wyślij"}</button>
         </div>
       </form>
+      {!analysis && <div className="image-suggestions" role="group" aria-label="Podpowiedzi opisów obrazu">
+        <small>Pomysł na obraz:</small>
+        {imageSuggestions.map((suggestion) => <button key={suggestion.label} type="button" disabled={isBusy} onClick={() => {
+          if (generationInFlight.current) return;
+          setMessage(suggestion.prompt); setMediaError(""); messageInput.current?.focus();
+        }}>{suggestion.label}</button>)}
+      </div>}
       {!analysis && <div className="media-actions">
-        <input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={async (event) => {
+        <input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp" hidden disabled={isBusy} onChange={async (event) => {
           const file = event.target.files?.[0]; event.target.value = "";
-          if (!file) return;
-          setPhotoBusy(true); setMediaError("");
+          if (!file || generationInFlight.current) return;
+          setPhoto(null); setPhotoBusy(true); setMediaError("");
           try { setPhoto(await preparePhoto(file)); } catch (error) { setMediaError(error instanceof Error ? error.message : "Nie można dodać zdjęcia."); }
           finally { setPhotoBusy(false); }
         }} />

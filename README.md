@@ -2,6 +2,15 @@
 
 ## Zdjęcia i generowanie obrazów
 
+Pod polem wiadomości są trzy podpowiedzi opisów dopasowane do Studio Nova.
+Kliknięcie wstawia opis do edycji; generowanie rozpoczyna dopiero przycisk
+„Wygeneruj obraz”. Pod wygenerowanym obrazem „Pobierz” zapisuje lokalny plik
+z rozszerzeniem zgodnym z formatem zwróconym przez dostawcę. Podczas generowania
+wyświetlany jest status „Generuję obraz…”, a pole tekstowe, podpowiedzi i przyciski
+wysyłania są zablokowane. Dodatkowa blokada chroni przed podwójnym kliknięciem
+zanim przeglądarka zdąży odświeżyć przyciski. Nieprawidłowy format lub rozmiar
+zdjęcia jest odrzucany lokalnie przed wysłaniem; poprzedni załącznik jest usuwany.
+
 „Dodaj zdjęcie” pozwala wybrać jeden plik JPG, PNG lub WebP do 4 MiB i wysłać
 go razem z pytaniem jako część `file` AI SDK. Miniatura pozostaje w rozmowie.
 Większe pliki są zmniejszane przed wysłaniem, aby zmieścić się w limicie żądania
