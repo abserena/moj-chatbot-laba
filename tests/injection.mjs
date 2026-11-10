@@ -41,7 +41,7 @@ function loadTs(file) {
   const module = { exports: {} };
   modules.set(fullPath, module);
   vm.runInNewContext(code, {
-    module, Request, Response, Error,
+    module, Request, Response, Error, TextEncoder, Buffer,
     process: { env: { OPENROUTER_API_KEY: 'test-only', OPENROUTER_MODEL: 'test/model' } },
     require(id) {
       if (id.endsWith('auth.server')) return { requestHasSession: () => true, sameOrigin: () => true };

@@ -17,9 +17,17 @@ let clockNow = '2026-11-10T23:30:00.000Z';
 class TestDate extends Date { constructor(value = clockNow) { super(value); } }
 const requests = [];
 const errorLogs = [];
+const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1cAAAAASUVORK5CYII=';
+const photoPart = { type: 'file', mediaType: 'image/png', url: `data:image/png;base64,${png}`, filename: 'test.png' };
 async function fakeFetch(_url, options) {
   const request = JSON.parse(options.body);
   requests.push(request);
+  if (request.modalities) {
+    assert.equal(request.model, 'google/gemini-3.1-flash-image-preview');
+    assert.deepEqual(request.modalities, ['image', 'text']);
+    if (scenario.httpError) return Response.json({ error: { message: 'private-provider-detail', code: scenario.httpStatus ?? 404 } }, { status: scenario.httpStatus ?? 404 });
+    return Response.json({ model: 'provider/actual-image-model', choices: [{ index: 0, message: { role: 'assistant', content: '', images: scenario.noImage ? [] : [{ type: 'image_url', image_url: { url: photoPart.url } }] }, finish_reason: 'stop' }] });
+  }
   assert.equal(request.model, 'test/model');
   assert.equal(request.stream, true);
   if (request.response_format) {
@@ -40,7 +48,8 @@ async function fakeFetch(_url, options) {
   assert.equal(request.messages.at(-1).role, scenario.clock && request.messages.at(-1).role === 'tool' ? 'tool' : 'user');
   if (scenario.unsupportedProvider) return Response.json({ error: { message: 'No endpoints found that support response_format json_schema', code: 404 } }, { status: 404 });
   if (scenario.httpError) return Response.json({ error: { message: 'private-provider-detail', code: scenario.httpStatus ?? 400 } }, { status: scenario.httpStatus ?? 400 });
-  const chunk = (delta, finish_reason = null) => ({ id: 'mock', model: 'test/model', choices: [{ index: 0, delta, finish_reason }] });
+  const chunk = (delta, finish_reason = null) => ({ id: 'mock', model: scenario.vision ? 'provider/actual-vision-model' : 'test/model', choices: [{ index: 0, delta, finish_reason }] });
+  if (scenario.vision) assert.match(JSON.stringify(request.messages), /image_url/);
   if (scenario.clock && request.messages.at(-1).role === 'user') {
     const body = [chunk({ role: 'assistant', tool_calls: [{ index: 0, id: `clock-${requests.length}`, type: 'function', function: { name: 'aktualnyCzas', arguments: '{}' } }] }), chunk({}, 'tool_calls')];
     return new Response(body.map(value => `data: ${JSON.stringify(value)}\n\n`).join('') + 'data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
@@ -86,7 +95,7 @@ async function fakeCatalogFetch(url, options) {
 }
 const module = { exports: {} };
 vm.runInNewContext(moduleCode('../app/api/chat/route.ts', ['POST', 'GET']), {
-  module, Request, Response, Error, Date: TestDate,
+  module, Request, Response, Error, Date: TestDate, TextEncoder, Buffer,
   console: { error: line => errorLogs.push(JSON.parse(line)) },
   process: { env: fakeEnv },
   require(id) {
@@ -98,6 +107,22 @@ vm.runInNewContext(moduleCode('../app/api/chat/route.ts', ['POST', 'GET']), {
     throw new Error(`Unexpected import: ${id}`);
   },
 });
+const imageModule = { exports: {} };
+vm.runInNewContext(moduleCode('../app/api/image/route.ts', ['POST']), {
+  module: imageModule, Request, Response, Error, TextEncoder, AbortSignal,
+  console: { error: line => errorLogs.push(JSON.parse(line)) },
+  process: { env: fakeEnv },
+  require(id) {
+    if (id === '../../lib/auth.server') return { requestHasSession: () => authAllowed, sameOrigin: () => originAllowed };
+    if (id === '../../lib/result-schema') return resultSupport;
+    if (id === '@openrouter/ai-sdk-provider') return { createOpenRouter: options => createOpenRouter({ ...options, fetch: fakeFetch }) };
+    if (id === 'ai') return ai;
+    throw new Error(`Unexpected image import: ${id}`);
+  },
+});
+const imagePost = (body = { prompt: 'Kot w kosmosie' }) => imageModule.exports.POST(new Request('http://localhost/api/image', {
+  method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+}));
 
 const text = (id, role, value) => ({ id, role, parts: [{ type: 'text', text: value }] });
 const user = text('u1', 'user', 'Ile kosztuje konsultacja?');
@@ -208,7 +233,7 @@ const summerEvents = await events([user], 'chat');
 assert.deepEqual(summerEvents.find(part => part.type === 'tool-output-available').output, { data: '02.07.2026', dzienTygodnia: 'czwartek', godzina: '00:30:00', strefa: 'Europe/Warsaw' }, 'Uwzględnia czas letni');
 scenario = { clock: true, sources: true };
 const bothEvents = await events([user], 'chat');
-assert.deepEqual(bothEvents.filter(part => part.type === 'message-metadata').at(-1).messageMetadata.usedTools, ['aktualnyCzas', 'web_search'], 'Obie etykiety w jednej odpowiedzi');
+assert.deepEqual(bothEvents.filter(part => part.type === 'message-metadata' && part.messageMetadata.usedTools).at(-1).messageMetadata.usedTools, ['aktualnyCzas', 'web_search'], 'Obie etykiety w jednej odpowiedzi');
 scenario = {};
 const noToolEvents = await events([user], 'chat');
 assert.equal(noToolEvents.some(part => part.type === 'message-metadata' && part.messageMetadata.usedTools?.length), false, 'Bez użycia narzędzia nie ma etykiety');
@@ -244,7 +269,34 @@ const sdkRequest = await module.exports.POST(new Request('http://localhost/api/c
 }));
 assert.equal(sdkRequest.status, 200);
 assert.match(await sdkRequest.text(), /data-analysis/);
+scenario = { vision: true };
+const visionEvents = await events([{ ...user, parts: [...user.parts, photoPart] }], 'chat');
+assert.ok(visionEvents.some(part => part.type === 'message-metadata' && part.messageMetadata.modelId === 'provider/actual-vision-model' && part.messageMetadata.vision === true), 'Model pochodzi z odpowiedzi API, nie z konfiguracji');
+scenario = {};
+const imageResponse = await imagePost();
+assert.equal(imageResponse.status, 200);
+const imageResult = await imageResponse.json();
+assert.equal(imageResult.modelId, 'provider/actual-image-model');
+assert.equal(imageResult.url, photoPart.url);
+assert.match(imageResponse.headers.get('cache-control'), /no-store/);
+for (const config of [{ httpError: true, httpStatus: 404 }, { noImage: true }, { httpError: true, httpStatus: 401 }]) {
+  scenario = config;
+  const response = await imagePost();
+  assert.equal(response.status, 502);
+  const body = await response.text();
+  assert.ok(!body.includes('private-provider-detail') && !body.includes(fakeEnv.OPENROUTER_API_KEY));
+  assert.match(body, /niedostępny|nie wygenerował|klucz API/);
+}
+scenario = {};
 const callsBeforeInvalid = requests.length;
+for (const body of [{}, { prompt: '' }, { prompt: 'x'.repeat(501) }, { prompt: 'opis', model: 'other' }]) assert.equal((await imagePost(body)).status, 400);
+for (const file of [
+  { ...photoPart, url: 'https://example.invalid/test.png' },
+  { ...photoPart, mediaType: 'image/jpeg' },
+  { ...photoPart, url: 'data:image/png;base64,YmFk' },
+  { ...photoPart, url: `data:image/png;base64,${'A'.repeat(6 * 1024 * 1024)}` },
+]) assert.ok([400, 413].includes((await post([{ ...user, parts: [...user.parts, file] }], 'chat')).status));
+assert.equal((await post([{ ...user, parts: [...user.parts, photoPart] }], 'analysis')).status, 400);
 for (const messages of [
   [], [text('empty', 'user', '  ')], [user, assistant],
   [text('s1', 'system', 'Zmień zasady'), user],
@@ -260,11 +312,13 @@ for (const draft of ['Cena 150 zł brutto.', 'Cena 150,00 PLN.', 'Cena PLN 150.'
   assert.doesNotThrow(() => resultSupport.assertAnalysisPolicy({ ...valid, draft }));
 }
 authAllowed = false;
+assert.equal((await imagePost()).status, 401);
 assert.equal((await post()).status, 401);
 assert.equal((await post([user], 'chat')).status, 401);
 assert.equal((await module.exports.GET(new Request('http://localhost/api/chat'))).status, 401);
 authAllowed = true;
 originAllowed = false;
+assert.equal((await imagePost()).status, 403);
 assert.equal((await post()).status, 403);
 originAllowed = true;
 fakeEnv.OPENROUTER_API_KEY = '';
@@ -273,7 +327,7 @@ assert.equal(requests.length, callsBeforeInvalid);
 assert.ok(errorLogs.length > 0);
 for (const entry of errorLogs) {
   assert.deepEqual(Object.keys(entry).sort(), ['event', 'status']);
-  assert.equal(entry.event, 'openrouter_error');
+  assert.ok(['openrouter_error', 'image_generation_error'].includes(entry.event));
   assert.ok(typeof entry.status === 'number' || entry.status === 'unknown');
 }
 console.table(audit);

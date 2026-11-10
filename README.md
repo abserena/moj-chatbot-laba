@@ -1,5 +1,30 @@
 # Mój chatbot
 
+## Zdjęcia i generowanie obrazów
+
+„Dodaj zdjęcie” pozwala wybrać jeden plik JPG, PNG lub WebP do 4 MiB i wysłać
+go razem z pytaniem jako część `file` AI SDK. Miniatura pozostaje w rozmowie.
+Większe pliki są zmniejszane przed wysłaniem, aby zmieścić się w limicie żądania
+Vercel. Do modelu wysyłane jest ostatnie zdjęcie z historii; wcześniejsze miniatury
+pozostają widoczne. Serwer sprawdza format, sygnaturę pliku, base64 i rozmiar;
+nie pobiera zdjęć z adresów URL. Zwykły czat musi mieć model obsługujący obrazy.
+
+„Wygeneruj obraz” wysyła opis (1–500 znaków) do POST `/api/image`. Endpoint
+najpierw sprawdza sesję i Origin, potem waliduje opis i wywołuje `generateImage`
+z `openrouter.imageModel("google/gemini-3.1-flash-image-preview")`. Nie ponawia
+automatycznie płatnych wywołań. Wynik jest wyświetlany w rozmowie; dane obrazu
+nie trafiają automatycznie do kolejnych pytań do modelu. Niedostępność modelu,
+brak obrazu i błędy OpenRouter mają komunikaty po polsku.
+
+Pod wygenerowanym obrazem identyfikator pochodzi z `result.responses[0].modelId`;
+pod odpowiedzią o zdjęciu — z `finish-step.response.modelId` w strumieniu SDK.
+Nazwa modelu do wyświetlenia nie jest kopiowana z konfiguracji żądania.
+
+Test w przeglądarce: dodaj zdjęcie i pytanie „Co jest na zdjęciu?”, sprawdź
+miniaturę oraz podpis modelu pod odpowiedzią. Następnie wpisz opis obrazu,
+kliknij „Wygeneruj obraz” i sprawdź wynik wraz z podpisem modelu. Spróbuj pliku
+większego niż 4 MiB i opisu ponad 500 znaków — powinny zostać odrzucone.
+
 ## Wyszukiwanie i źródła
 
 W zwykłym czacie dostępna jest również funkcja `aktualnyCzas`. Nie przyjmuje

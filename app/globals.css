@@ -34,4 +34,9 @@ textarea:focus-visible { outline: 3px solid #91aaff; outline-offset: 3px; }
 .cancel { margin-top: 12px; }
 .tool-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; white-space: normal; }
 .tool-badge { padding: 3px 8px; border-radius: 12px; background: #e0e5f0; color: #27344d; font-size: 12px; }
+.photo-thumbnail { display: block; max-width: 180px; max-height: 140px; object-fit: contain; border-radius: 8px; margin: 8px 0; }
+.generated-image { display: block; max-width: 100%; max-height: 480px; object-fit: contain; border-radius: 8px; margin-top: 8px; }
+.model-caption { display: block; margin-top: 8px; color: #4a566b; overflow-wrap: anywhere; }
+.media-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+.media-actions small { flex-basis: 100%; color: #4a566b; }
 @media (max-width: 520px) { .composer { flex-direction: column; } .message { max-width: 100%; } }

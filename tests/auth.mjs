@@ -48,6 +48,7 @@ const chat = cookie => fetch(base + '/api/chat', {
 await withServer({}, async () => {
   assert.match(await (await fetch(base)).text(), /Wpisz hasło/);
   assert.equal((await chat()).status, 401);
+  assert.equal((await fetch(base + '/api/image', { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify({ prompt: 'test' }) })).status, 401);
   assert.equal((await chat('chat_session=forged')).status, 401);
   assert.equal((await login('wrong')).status, 401);
   const response = await login('local-test-password');
