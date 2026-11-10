@@ -40,15 +40,17 @@ async function withServer(overrides, run) {
 const login = password => fetch(base + '/api/session', {
   method: 'POST', headers: { origin: base, 'content-type': 'application/json' }, body: JSON.stringify({ password }),
 });
-const chat = cookie => fetch(base + '/api/chat', {
+const chat = cookie => fetch(base + '/api/agent', {
   method: 'POST', headers: { origin: base, ...(cookie ? { cookie } : {}), 'content-type': 'application/json' },
   body: JSON.stringify({ messages: [] }),
 });
 
 await withServer({}, async () => {
   assert.match(await (await fetch(base)).text(), /Wpisz hasło/);
+  assert.equal((await fetch(base + '/api/chat', { method: 'POST' })).status, 404);
+  assert.equal((await fetch(base + '/api/image', { method: 'POST' })).status, 404);
   assert.equal((await chat()).status, 401);
-  assert.equal((await fetch(base + '/api/image', { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify({ prompt: 'test' }) })).status, 401);
+  assert.equal((await fetch(base + '/api/agent', { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: JSON.stringify({ mode: 'analyze', messages: [] }) })).status, 401);
   assert.equal((await chat('chat_session=forged')).status, 401);
   assert.equal((await login('wrong')).status, 401);
   const response = await login('local-test-password');
@@ -60,6 +62,7 @@ await withServer({}, async () => {
   const cookie = setCookie.split(';')[0];
   assert.ok(!cookie.includes('local-test-password'));
   assert.match(await (await fetch(base, { headers: { cookie } })).text(), /Mój chatbot/);
+  assert.match(await (await fetch(base, { headers: { cookie } })).text(), /Analiza JSON/);
   assert.equal((await chat(cookie)).status, 503); // OpenRouter wyłączony: nie ma wywołania modelu.
   const logout = await fetch(base + '/api/session', { method: 'DELETE', headers: { origin: base, cookie } });
   assert.equal(logout.status, 204);

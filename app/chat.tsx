@@ -7,7 +7,7 @@ import type { FileUIPart } from "ai";
 import type { StudioNovaMessage, StudioNovaResult } from "./lib/result-schema";
 import type { AnalysisCapability } from "./lib/model-capabilities";
 
-type Mode = "chat" | "analysis";
+type Mode = "chat" | "analyze";
 const categoryLabels = { sales: "Oferta i cena", support: "Problem techniczny", billing: "Płatność lub zwrot", unknown: "Nierozpoznana sprawa" };
 const imageSuggestions = [
   { label: "Konsultacja online", prompt: "Minimalistyczna grafika dla Studio Nova: przyjazna konsultacja online, laptop na jasnym biurku, ciepłe światło, spokojne kolory, bez napisów." },
@@ -70,7 +70,7 @@ function AnalysisResult({ result }: { result: StudioNovaResult }) {
 }
 
 function ChatPanel({ mode, active }: { mode: Mode; active: boolean }) {
-  const analysis = mode === "analysis";
+  const analysis = mode === "analyze";
   const [message, setMessage] = useState("");
   const [preview, setPreview] = useState("");
   const [interrupted, setInterrupted] = useState(false);
@@ -80,15 +80,17 @@ function ChatPanel({ mode, active }: { mode: Mode; active: boolean }) {
   const [photo, setPhoto] = useState<FileUIPart | null>(null);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [imageBusy, setImageBusy] = useState(false);
+  const [analysisBusy, setAnalysisBusy] = useState(false);
   const [mediaError, setMediaError] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const messageInput = useRef<HTMLTextAreaElement>(null);
   const generationInFlight = useRef(false);
   const transport = useMemo(() => new DefaultChatTransport<StudioNovaMessage>({
-    api: "/api/chat", body: { mode }, fetch: sessionFetch,
+    api: "/api/agent", body: { mode }, fetch: sessionFetch,
     prepareSendMessagesRequest: ({ messages, body }) => {
       const lastPhoto = messages.findLastIndex((item) => item.role === "user" && item.parts.some((part) => part.type === "file"));
-      const outgoing = messages.map((item, index) => ({ ...item, parts: item.parts.filter((part) => part.type !== "file" || (item.role === "user" && index === lastPhoto)) })).filter((item) => item.parts.length > 0);
+      const outgoing = messages.map((item, index) => ({ ...item, parts: item.parts.filter((part) => part.type !== "file" || (item.role === "user" && index === lastPhoto)).map((part) =>
+        part.type === "tool-generujObraz" && part.state === "output-available" ? { ...part, output: { ...part.output, url: undefined } } : part) })).filter((item) => item.parts.length > 0);
       const payload = { ...body, messages: outgoing };
       if (new TextEncoder().encode(JSON.stringify(payload)).length > 4 * 1024 * 1024) throw new Error("Wiadomość jest za duża. Wybierz mniejsze zdjęcie lub odśwież rozmowę.");
       return { body: payload };
@@ -105,33 +107,39 @@ function ChatPanel({ mode, active }: { mode: Mode; active: boolean }) {
     },
     onError: () => setPreview(""),
   });
-  const isBusy = status === "submitted" || status === "streaming" || imageBusy || photoBusy;
+  const isBusy = status === "submitted" || status === "streaming" || imageBusy || photoBusy || analysisBusy;
+  const imageToolBusy = messages.at(-1)?.parts.some((part) => part.type === "tool-generujObraz" && (part.state === "input-streaming" || part.state === "input-available"));
 
   async function generatePicture() {
     const prompt = message.trim();
     if (isBusy || generationInFlight.current || !prompt) return;
     if ([...prompt].length > 500) { setMediaError("Opis obrazu może mieć najwyżej 500 znaków."); return; }
     generationInFlight.current = true;
-    setMediaError(""); clearError(); setImageBusy(true);
+    setMediaError(""); setInterrupted(false); clearError(); setImageBusy(true);
     try {
-      const response = await sessionFetch("/api/image", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt }) });
-      const result = await response.json().catch(() => { throw new Error("Usługa obrazów zwróciła nieprawidłową odpowiedź lub przekroczono limit rozmiaru. Spróbuj ponownie."); });
-      if (!response.ok) throw new Error(result.error || "Nie udało się wygenerować obrazu.");
-      if (typeof result.modelId !== "string" || !/^data:image\/(png|jpeg|webp);base64,/.test(result.url)) throw new Error("Dostawca zwrócił nieprawidłowy obraz.");
-      setMessages((items) => [...items,
-        { id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text: `Wygeneruj obraz: ${prompt}` }] },
-        { id: crypto.randomUUID(), role: "assistant", metadata: { generatedImage: true, modelId: result.modelId }, parts: [{ type: "text", text: `Wygenerowany obraz: ${prompt}` }, { type: "file", mediaType: result.url.slice(5, result.url.indexOf(";")), url: result.url }] },
-      ]);
+      await sendMessage({ text: `Wygeneruj obraz: ${prompt}` }, { body: { imagePrompt: prompt } });
       setMessage("");
     } catch (error) { setMediaError(error instanceof Error ? error.message : "Nie udało się wygenerować obrazu."); }
     finally { generationInFlight.current = false; setImageBusy(false); }
+  }
+
+  async function analyzeMessage(text: string) {
+    generationInFlight.current = true; setAnalysisBusy(true);
+    setMessages((items) => [...items, { id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text }] }]);
+    try {
+      const response = await sessionFetch("/api/agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "analyze", messages: [{ id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text }] }] }) });
+      if (!response.ok) throw new Error(await response.text());
+      const result = await response.json() as StudioNovaResult;
+      setMessages((items) => [...items, { id: crypto.randomUUID(), role: "assistant", parts: [{ type: "data-analysis", id: "result", data: result }] }]);
+    } catch (error) { setMediaError(error instanceof Error ? error.message : "Nie udało się przeanalizować wiadomości."); }
+    finally { generationInFlight.current = false; setAnalysisBusy(false); }
   }
 
   useEffect(() => {
     if (!analysis || !active) return;
     const controller = new AbortController();
     setChecking(true);
-    void sessionFetch("/api/chat", { signal: controller.signal })
+    void sessionFetch("/api/agent", { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error("capability");
         return await response.json() as AnalysisCapability;
@@ -152,7 +160,8 @@ function ChatPanel({ mode, active }: { mode: Mode; active: boolean }) {
     setMediaError("");
     setPreview("");
     setInterrupted(false);
-    void sendMessage({ text, files: photo ? [photo] : undefined });
+    if (analysis) void analyzeMessage(text);
+    else void sendMessage({ text, files: photo ? [photo] : undefined });
     setPhoto(null);
     setMessage("");
   }
@@ -177,9 +186,21 @@ function ChatPanel({ mode, active }: { mode: Mode; active: boolean }) {
               <div className="tool-badges" aria-label="Użyte narzędzia">
                 {item.metadata?.usedTools?.includes("web_search") && <small className="tool-badge">🔎 wyszukiwanie</small>}
                 {item.metadata?.usedTools?.includes("aktualnyCzas") && <small className="tool-badge">🕒 aktualnyCzas</small>}
+                {item.metadata?.usedTools?.includes("generujObraz") && <small className="tool-badge">🎨 generowanie obrazu</small>}
               </div>
             )}
             {item.parts.map((part, index) => {
+              if (part.type === "tool-generujObraz" && part.state === "output-available") {
+                if (!part.output.generated) return <p key={index} className="error" role="alert">{part.output.error || "Nie udało się wygenerować obrazu."}</p>;
+                const url = part.output.url;
+                if (!url || !/^data:image\/(png|jpeg|webp);base64,/.test(url)) return null;
+                const extension = url.startsWith("data:image/jpeg") ? "jpg" : url.startsWith("data:image/webp") ? "webp" : "png";
+                return <div key={index}>
+                  <img className="generated-image" src={url} alt={part.input.prompt} />
+                  <a className="download-image" href={url} download={`studio-nova-${item.id}.${extension}`}>Pobierz</a>
+                  {part.output.modelId && <small className="model-caption">Model: {part.output.modelId}</small>}
+                </div>;
+              }
               if (part.type === "data-analysis") return <AnalysisResult key={index} result={part.data} />;
               if (part.type === "file" && /^data:image\/(jpeg|png|webp);base64,/.test(part.url)) return <div key={index}>
                 <img className={item.metadata?.generatedImage ? "generated-image" : "photo-thumbnail"} src={part.url} alt={item.metadata?.generatedImage ? "Wygenerowany obraz" : "Wysłane zdjęcie"} />
@@ -204,7 +225,7 @@ function ChatPanel({ mode, active }: { mode: Mode; active: boolean }) {
           </div>
         ))}
       </section>
-      {isBusy && <p role="status">{imageBusy ? "Generuję obraz…" : photoBusy ? "Przygotowuję zdjęcie…" : analysis ? (preview ? "Trwa analiza i walidacja — wynik nie jest jeszcze zatwierdzony." : "Czekam na analizę…") : (status === "submitted" ? "Czekam na odpowiedź…" : "Chatbot pisze…")}</p>}
+      {isBusy && <p role="status">{imageBusy || imageToolBusy ? "Generuję obraz…" : photoBusy ? "Przygotowuję zdjęcie…" : analysis ? "Analizuję wiadomość i sprawdzam JSON…" : (status === "submitted" ? "Czekam na odpowiedź…" : "Chatbot pisze…")}</p>}
       {interrupted && <p role="alert" className="error">{analysis ? "Analiza została przerwana. Nie utworzono wyniku. Możesz spróbować ponownie." : "Odpowiedź została przerwana i może być niepełna."}</p>}
       {error && <p className="error" role="alert">{error.message || "Nie udało się uzyskać odpowiedzi. Spróbuj ponownie."}</p>}
       {mediaError && <p className="error" role="alert">{mediaError}</p>}
@@ -256,10 +277,10 @@ export default function Chat() {
       {logoutError && <p role="alert" className="error">{logoutError}</p>}
       <div className="mode-switch" role="group" aria-label="Tryb pracy">
         <button type="button" aria-pressed={mode === "chat"} onClick={() => setMode("chat")}>Zwykły czat</button>
-        <button type="button" aria-pressed={mode === "analysis"} onClick={() => setMode("analysis")}>Analiza wiadomości</button>
+        <button type="button" aria-pressed={mode === "analyze"} onClick={() => setMode("analyze")}>Analiza JSON</button>
       </div>
       <ChatPanel mode="chat" active={mode === "chat"} />
-      <ChatPanel mode="analysis" active={mode === "analysis"} />
+      <ChatPanel mode="analyze" active={mode === "analyze"} />
     </main>
   );
 }

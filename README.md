@@ -1,5 +1,27 @@
 # Mój chatbot
 
+## Wspólny endpoint agenta
+
+POST `/api/agent` najpierw sprawdza sesję, następnie Origin i dane żądania.
+`mode: "chat"` zwraca strumień UI z `streamText`, źródłami, zdjęciami i narzędziami
+`web_search`, `aktualnyCzas` oraz `generujObraz`. Limit to `isStepCount(5)`
+(alias `stepCountIs` w zainstalowanym SDK 6). `mode: "analyze"` zwraca kompletny
+JSON z `generateText` + `Output.object`, po walidacji schematu i zasad firmy.
+GET `/api/agent` pokazuje możliwości analizy wyłącznie zalogowanemu użytkownikowi.
+
+Wynik `generujObraz` zawiera plik i identyfikator modelu dla przeglądarki.
+`toModelOutput` zwraca do modelu tylko „obraz wygenerowany” albo krótki komunikat
+błędu. Ten sam zestaw narzędzi trafia do `streamText` i `convertToModelMessages`,
+więc plik nie wraca do modelu również w kolejnych wiadomościach. Przeglądarka
+pomija dane wygenerowanego obrazu przy odsyłaniu historii. Pobieranie i miniatury
+nadal działają. Przycisk generowania wymusza narzędzie w pierwszym kroku;
+jedno żądanie nie generuje wielokrotnie tego samego obrazu.
+
+Stare `/api/chat` i `/api/image` usunięto po testach `/api/agent`. Interfejs,
+przycisk „Analiza JSON” i generowanie obrazu korzystają z nowego endpointu.
+`npm run test:chat` uruchamia `tests/agent.mjs`, w tym test braku pliku w kolejnych
+krokach i w historii modelu. `test:auth` sprawdza 401 obu trybów i 404 starych tras.
+
 ## Zdjęcia i generowanie obrazów
 
 Pod polem wiadomości są trzy podpowiedzi opisów dopasowane do Studio Nova.
@@ -18,9 +40,9 @@ Vercel. Do modelu wysyłane jest ostatnie zdjęcie z historii; wcześniejsze min
 pozostają widoczne. Serwer sprawdza format, sygnaturę pliku, base64 i rozmiar;
 nie pobiera zdjęć z adresów URL. Zwykły czat musi mieć model obsługujący obrazy.
 
-„Wygeneruj obraz” wysyła opis (1–500 znaków) do POST `/api/image`. Endpoint
-najpierw sprawdza sesję i Origin, potem waliduje opis i wywołuje `generateImage`
-z `openrouter.imageModel("google/gemini-3.1-flash-image-preview")`. Nie ponawia
+„Wygeneruj obraz” wysyła opis (1–500 znaków) do POST `/api/agent` w trybie chat.
+Endpoint najpierw sprawdza sesję i Origin, potem waliduje opis. Narzędzie wywołuje
+`generateImage` z `openrouter.imageModel("google/gemini-3.1-flash-image-preview")`. Nie ponawia
 automatycznie płatnych wywołań. Wynik jest wyświetlany w rozmowie; dane obrazu
 nie trafiają automatycznie do kolejnych pytań do modelu. Niedostępność modelu,
 brak obrazu i błędy OpenRouter mają komunikaty po polsku.
@@ -121,20 +143,20 @@ wykonuje właściciel, bo może wiązać się z opłatą.
 
 ## Wynik JSON Studio Nova
 
-Interfejs zawiera osobne tryby „Zwykły czat” (domyślny) i „Analiza wiadomości”.
+Interfejs zawiera osobne tryby „Zwykły czat” (domyślny) i „Analiza JSON”.
 Historie i wpisywana treść są oddzielne i pozostają zachowane przy przełączaniu.
-POST `/api/chat` bez pola `mode` zachowuje zwykły czat, bez wymogu JSON Schema.
-`mode: "analysis"` uruchamia analizę wyłącznie ostatniej wiadomości klienta.
+POST `/api/agent` bez pola `mode` zachowuje zwykły czat, bez wymogu JSON Schema.
+`mode: "analyze"` uruchamia analizę wyłącznie ostatniej wiadomości klienta.
 Wynik jest pokazany jako kategoria, priorytet, szkic i status sprawdzenia;
 surowy JSON można rozwinąć. Każdy wynik jest oznaczony jako szkic, także
 przy `needs_review=false`.
 
-Serwer używa AI SDK 6: `streamText` z `Output.object` oraz JSON Schema
+Serwer używa AI SDK 6: `generateText` z `Output.object` oraz JSON Schema
 przekazywanym przez istniejący adapter OpenRouter. Model i klucz nadal pochodzą
 z dotychczasowej konfiguracji. Wybrany model musi obsługiwać JSON Schema;
 aplikacja nie przełącza samodzielnie modelu i nie ponawia płatnych wywołań.
 Przed analizą serwer sprawdza publiczne metadane ustawionego modelu
-(`supported_parameters` musi zawierać `structured_outputs`). GET `/api/chat`
+(`supported_parameters` musi zawierać `structured_outputs`). GET `/api/agent`
 pokazuje ten stan tylko zalogowanemu użytkownikowi. Odczyt katalogu nie wymaga
 klucza i nie generuje odpowiedzi modelu. Analiza wymaga dostawcy obsługującego
 wszystkie parametry (`provider.require_parameters=true`). Brak obsługi, brak
@@ -149,19 +171,19 @@ Wszystkie pola są wymagane, dodatkowe pola są zabronione. AI SDK sprawdza
 typy, wartości enum, wymagane pola i brak dodatkowych właściwości lokalnym
 walidatorem; samo parsowanie JSON nie oznacza akceptacji wyniku.
 
-Postęp jest przesyłany strumieniowo jako dane przejściowe. Dopiero po
-zakończeniu generowania i walidacji wynik trafia do historii analiz.
-Przy odmowie (`content-filter` lub surowe `delta.refusal`), ucięciu (`length`),
+Analiza nie przesyła fragmentów JSON. Dopiero po zakończeniu generowania
+i walidacji kompletny wynik trafia do historii analiz.
+Przy odmowie (`content-filter` lub `message.refusal`), ucięciu (`length`),
 błędzie JSON/schematu lub błędzie dostawcy pojawia się odpowiedni komunikat.
 Odmowa wyrażona tylko zwykłym tekstem, bez sygnału dostawcy, jest odrzucana
 jako niezgodny format. Nie tworzymy zastępczego wyniku z wymyślonymi polami.
 Surowe błędy i konfiguracja dostawcy nie są ujawniane w interfejsie.
 
 `npm.cmd run test:chat` sprawdza pełny handler, prawdziwe AI SDK i adapter
-OpenRouter z atrapą HTTP: poprawny JSON, kolejne pytanie po `step-start`,
-streaming, brak/dodatkowe pola, złe enum/typy, uszkodzony JSON, odmowę,
-ucięcie, anulowanie, brak prawidłowego zakończenia, błędy HTTP/streamu,
-brak obsługi modelu/dostawcy, awarię katalogu, osobny zwykły czat i blokady API.
+OpenRouter z atrapą HTTP: poprawny JSON, streaming czatu i narzędzi,
+dodatkowe pola, złe typy, uszkodzony JSON, odmowę i ucięcie, błędy HTTP,
+brak obsługi analizy, vision, generowanie obrazu, limit pięciu kroków,
+historię narzędzi, tekstowy wynik dla modelu oraz blokady API.
 Test nie odczytuje `.env` ani rzeczywistych sekretów i nie łączy się z siecią.
 
 Reguły kategorii: `sales` = oferta i cena, `support` = problem techniczny,
@@ -235,7 +257,7 @@ w firewallu opisany wyżej.
 
 Po wdrożeniu pod adresem HTTPS koniecznie sprawdź:
 
-1. W oknie prywatnym widać ekran hasła, a POST `/api/chat` bez cookie zwraca 401.
+1. W oknie prywatnym widać ekran hasła, a POST `/api/agent` bez cookie zwraca 401.
 2. Błędne hasło jest odrzucane; poprawne wpuszcza do czatu.
 3. Odświeżenie zachowuje sesję, a cookie ma Secure, HttpOnly i SameSite=Strict.
 4. Wyjdź usuwa cookie i po odświeżeniu wraca ekran hasła.

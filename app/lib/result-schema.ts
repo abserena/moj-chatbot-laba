@@ -9,12 +9,15 @@ export type StudioNovaResult = {
   needs_review: boolean;
 };
 
+export type GeneratedImageResult = { generated: boolean; url?: string; modelId?: string; error?: string };
+
 export type StudioNovaMessage = UIMessage<
-  { fetchedAt?: string; usedTools?: ("web_search" | "aktualnyCzas")[]; modelId?: string; vision?: boolean; generatedImage?: boolean },
+  { fetchedAt?: string; usedTools?: ("web_search" | "aktualnyCzas" | "generujObraz")[]; modelId?: string; vision?: boolean; generatedImage?: boolean },
   { preview: { delta: string }; analysis: StudioNovaResult },
   {
     aktualnyCzas: { input: Record<string, never>; output: { data: string; dzienTygodnia: string; godzina: string; strefa: string } };
     web_search: { input: unknown; output: unknown };
+    generujObraz: { input: { prompt: string }; output: GeneratedImageResult };
   }
 >;
 
