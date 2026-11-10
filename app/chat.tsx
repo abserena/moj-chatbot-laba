@@ -9,7 +9,7 @@ import type { AnalysisCapability } from "./lib/model-capabilities";
 
 type Mode = "chat" | "analyze";
 const categoryLabels = { sales: "Oferta i cena", support: "Problem techniczny", billing: "Płatność lub zwrot", unknown: "Nierozpoznana sprawa" };
-const toolLabels = { web_search: "🔎 wyszukiwanie", aktualnyCzas: "🕒 aktualnyCzas", generujObraz: "🎨 generowanie obrazu" };
+const toolLabels = { web_search: "🔎 wyszukiwanie", aktualnyCzas: "🕒 aktualnyCzas", generujObraz: "🎨 generowanie obrazu", ofertaKonsultacji: "📋 ofertaKonsultacji", sprawdzDostepneTerminy: "📅 sprawdzDostepneTerminy" };
 const imageSuggestions = [
   { label: "Konsultacja online", prompt: "Minimalistyczna grafika dla Studio Nova: przyjazna konsultacja online, laptop na jasnym biurku, ciepłe światło, spokojne kolory, bez napisów." },
   { label: "Pomoc klientom", prompt: "Ilustracja dla Studio Nova: życzliwy konsultant pomaga klientowi podczas wideorozmowy, nowoczesny i profesjonalny styl, niebieskie akcenty, bez napisów." },

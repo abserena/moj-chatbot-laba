@@ -1,5 +1,24 @@
 # Mój chatbot
 
+## Narzędzia Studio Nova
+
+`ofertaKonsultacji` odczytuje lokalne dane firmy: konsultacja online kosztuje
+150 zł brutto i trwa 45 minut. Zwraca też opis, walutę, źródło oraz czas odczytu.
+`sprawdzDostepneTerminy` odczytuje listę z `app/lib/studio-nova-schedule.ts`:
+11 listopada 2026, 14:00 oraz 15 listopada 2026, 10:00, strefa Europe/Warsaw.
+Zwraca wyłącznie terminy zaczynające się w przyszłości. Nie rezerwuje spotkań;
+po wyczerpaniu listy kieruje do pracownika, bez wymyślania nowych godzin.
+Lista jest aktualizowana ręcznie i wymaga ponownego wdrożenia po zmianie.
+
+Obie funkcje działają bez zewnętrznego API i dodatkowego klucza. W czacie mają
+etykiety „📋 ofertaKonsultacji” i „📅 sprawdzDostepneTerminy”. Pierwszą funkcję
+zbudowano i przetestowano przed dodaniem drugiej. Testy obejmują dane oferty,
+wyniki i etykiety funkcji, historię oraz pomijanie minionych terminów.
+
+Po odświeżeniu aplikacji zapytaj „Ile kosztuje konsultacja i ile trwa?”, a potem
+„Jakie są wolne terminy?”. Sprawdź etykiety i strefę czasu; nie otrzymasz
+potwierdzenia rezerwacji, ponieważ agent nie wykonuje takiej operacji.
+
 ## Wspólny endpoint agenta
 
 Nad każdą odpowiedzią czatu etykiety narzędzi są numerowane według kolejności

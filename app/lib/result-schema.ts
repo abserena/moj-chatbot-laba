@@ -10,7 +10,9 @@ export type StudioNovaResult = {
 };
 
 export type GeneratedImageResult = { generated: boolean; url?: string; modelId?: string; error?: string };
-export type AgentToolName = "web_search" | "aktualnyCzas" | "generujObraz";
+export type StudioNovaOffer = { nazwa: string; opis: string; cenaBrutto: number; waluta: string; czasTrwaniaMinuty: number; zrodlo: string; pobrano: string };
+export type StudioNovaAvailability = { terminy: { start: string; data: string; godzina: string }[]; strefa: string; czasTrwaniaMinuty: number; zrodlo: string; pobrano: string; rezerwacja: boolean; komunikat: string };
+export type AgentToolName = "web_search" | "aktualnyCzas" | "generujObraz" | "ofertaKonsultacji" | "sprawdzDostepneTerminy";
 export type AgentToolUse = { name: AgentToolName; callId: string; step: number };
 
 export type StudioNovaMessage = UIMessage<
@@ -20,6 +22,8 @@ export type StudioNovaMessage = UIMessage<
     aktualnyCzas: { input: Record<string, never>; output: { data: string; dzienTygodnia: string; godzina: string; strefa: string } };
     web_search: { input: unknown; output: unknown };
     generujObraz: { input: { prompt: string }; output: GeneratedImageResult };
+    ofertaKonsultacji: { input: Record<string, never>; output: StudioNovaOffer };
+    sprawdzDostepneTerminy: { input: Record<string, never>; output: StudioNovaAvailability };
   }
 >;
 

@@ -12,6 +12,8 @@ const photo = { type: 'file', mediaType: 'image/png', url: `data:image/png;base6
 const user = { id: 'user', role: 'user', parts: [{ type: 'text', text: 'Ile kosztuje konsultacja?' }] };
 const env = { OPENROUTER_API_KEY: 'fake-test-only', OPENROUTER_MODEL: 'test/model' };
 let session = true, origin = true, scenario = {};
+let workshopNow = '2026-11-10T12:00:00Z';
+class WorkshopDate extends Date { constructor(value = workshopNow) { super(value); } }
 const requests = [], logs = [];
 async function fakeFetch(_url, options) {
   const req = JSON.parse(options.body); requests.push(req);
@@ -44,10 +46,10 @@ async function fakeFetch(_url, options) {
   const chunk = (delta, finish_reason = null) => ({ id: 'chat', model: 'actual/chat-model', choices: [{ index: 0, delta, finish_reason }] });
   let chunks;
   const continueLoop = scenario.loop && !(scenario.naturalFifth && req.messages.filter(item => item.role === 'tool').length >= 4);
-  if (continueLoop || ((scenario.image || scenario.clock || scenario.imageError) && last.role === 'user')) {
+  if (continueLoop || ((scenario.image || scenario.clock || scenario.imageError || scenario.offer || scenario.availability || scenario.bothStudioTools) && last.role === 'user')) {
     const image = scenario.image || scenario.imageError;
     if (scenario.fixedPrompt && last.role === 'user') assert.equal(req.tool_choice.function.name, 'generujObraz');
-    const names = scenario.parallel && image ? ['generujObraz', 'generujObraz'] : [image ? 'generujObraz' : 'aktualnyCzas'];
+    const names = scenario.bothStudioTools ? ['ofertaKonsultacji', 'sprawdzDostepneTerminy'] : scenario.parallel && image ? ['generujObraz', 'generujObraz'] : [image ? 'generujObraz' : scenario.offer ? 'ofertaKonsultacji' : scenario.availability ? 'sprawdzDostepneTerminy' : 'aktualnyCzas'];
     chunks = [chunk({ role: 'assistant', ...(scenario.partialText ? { content: 'Zbieram dane.' } : {}), tool_calls: names.map((name, index) => ({ index, id: `call-${requests.length}-${index}`, type: 'function', function: { name, arguments: image ? JSON.stringify({ prompt: 'Ilustracja konsultacji online' }) : '{}' } })) }), chunk({}, 'tool_calls')];
   } else {
     chunks = [chunk({ role: 'assistant', content: 'Odpowiedź po użyciu narzędzi.' }), ...(scenario.sources ? Array.from({ length: scenario.duplicateSources ? 2 : 1 }, () => chunk({ annotations: [{ type: 'url_citation', url_citation: { url: 'https://nbp.pl/', title: 'NBP', start_index: 0, end_index: 5 } }] })) : []), chunk({}, 'stop')];
@@ -64,6 +66,13 @@ vm.runInNewContext(moduleCode('../app/lib/result-schema.ts', ['assertAnalysisPol
   module: schemaModule, Error,
   require: id => id === 'ai' ? ai : { unsupportedAnalysisMessage: 'Model nie obsługuje analizy JSON.' },
 });
+const studioModule = { exports: {} };
+const scheduleModule = { exports: {} };
+vm.runInNewContext(moduleCode('../app/lib/studio-nova-schedule.ts', ['studioNovaSchedule']), { module: scheduleModule });
+vm.runInNewContext(moduleCode('../app/lib/studio-nova-tools.ts', ['ofertaKonsultacji', 'sprawdzDostepneTerminy']), {
+  module: studioModule, Error, Date: WorkshopDate,
+  require: id => id === 'ai' ? ai : id.endsWith('studio-nova-schedule') ? scheduleModule.exports : schemaModule.exports,
+});
 const module = { exports: {} };
 vm.runInNewContext(moduleCode('../app/api/agent/route.ts', ['POST', 'GET']), {
   module, Request, Response, Error, Buffer, TextEncoder, AbortSignal,
@@ -73,6 +82,7 @@ vm.runInNewContext(moduleCode('../app/api/agent/route.ts', ['POST', 'GET']), {
     if (id === '@openrouter/ai-sdk-provider') return { createOpenRouter: settings => createOpenRouter({ ...settings, fetch: fakeFetch }) };
     if (id.endsWith('auth.server')) return { requestHasSession: () => session, sameOrigin: () => origin };
     if (id.endsWith('result-schema')) return schemaModule.exports;
+    if (id.endsWith('studio-nova-tools')) return studioModule.exports;
     if (id.endsWith('model-capabilities')) return { getAnalysisCapability: async () => ({ supported: scenario.unsupported ? false : true, message: 'Model nie obsługuje analizy JSON.' }) };
     throw new Error(`Unexpected import ${id}`);
   },
@@ -103,6 +113,34 @@ for (const config of [{ invalidJson: '{bad' }, { result: { ...valid, needs_revie
   const text = await response.text(); assert.ok(!text.includes('private-provider-detail') && !text.includes(env.OPENROUTER_API_KEY));
 }
 scenario = { unsupported: true }; const before = requests.length; assert.equal((await post('analyze')).status, 422); assert.equal(requests.length, before);
+scenario = { offer: true };
+const offerStart = requests.length; const offerEvents = await events();
+const offer = offerEvents.find(item => item.type === 'tool-output-available').output;
+assert.equal(offer.cenaBrutto, 150); assert.equal(offer.czasTrwaniaMinuty, 45); assert.equal(offer.waluta, 'PLN');
+assert.match(offer.zrodlo, /Lokalna konfiguracja/); assert.ok(Number.isFinite(Date.parse(offer.pobrano)));
+assert.equal(requests.length - offerStart, 2, 'Pierwsze narzędzie: wykonanie funkcji i odpowiedź modelu');
+assert.ok(offerEvents.some(item => item.messageMetadata?.toolUses?.some(use => use.name === 'ofertaKonsultacji')));
+const offerHistory = { id: 'offer', role: 'assistant', parts: [{ type: 'tool-ofertaKonsultacji', toolCallId: 'offer-history', input: {}, state: 'output-available', output: offer }, { type: 'text', text: 'Oferta konsultacji.' }] };
+await events([user, offerHistory, { ...user, id: 'offer-follow-up' }]);
+scenario = { availability: true };
+const availableEvents = await events();
+const availabilityResult = availableEvents.find(item => item.type === 'tool-output-available').output;
+assert.deepEqual(availabilityResult.terminy.map(item => [item.data, item.godzina]), [['11.11.2026', '14:00'], ['15.11.2026', '10:00']]);
+assert.equal(availabilityResult.strefa, 'Europe/Warsaw'); assert.equal(availabilityResult.rezerwacja, false); assert.equal(availabilityResult.czasTrwaniaMinuty, 45);
+assert.match(availabilityResult.zrodlo, /właściciela Studio Nova/); assert.equal(availabilityResult.pobrano, '2026-11-10T12:00:00.000Z');
+assert.ok(availableEvents.some(item => item.messageMetadata?.toolUses?.some(use => use.name === 'sprawdzDostepneTerminy')));
+const availabilityHistory = { id: 'availability', role: 'assistant', parts: [{ type: 'tool-sprawdzDostepneTerminy', toolCallId: 'availability-history', input: {}, state: 'output-available', output: availabilityResult }, { type: 'text', text: 'Dostępne terminy.' }] };
+workshopNow = '2026-11-11T13:00:00Z';
+const remainingEvents = await events([user, availabilityHistory, { ...user, id: 'availability-follow-up' }]);
+assert.deepEqual(remainingEvents.find(item => item.type === 'tool-output-available').output.terminy.map(item => item.start), ['2026-11-15T10:00:00+01:00'], 'Ponowne sprawdzenie usuwa rozpoczęty termin mimo starego wyniku w historii');
+workshopNow = '2026-11-15T09:00:00Z';
+const expired = (await events()).find(item => item.type === 'tool-output-available').output;
+assert.deepEqual(expired.terminy, []); assert.equal(expired.rezerwacja, false); assert.match(expired.komunikat, /nie ma przyszłych/);
+workshopNow = '2026-11-10T12:00:00Z';
+scenario = { bothStudioTools: true };
+const combined = await events();
+assert.equal(combined.filter(item => item.type === 'tool-output-available').length, 2);
+assert.deepEqual(combined.filter(item => item.messageMetadata?.toolUses).at(-1).messageMetadata.toolUses.map(item => item.name), ['ofertaKonsultacji', 'sprawdzDostepneTerminy']);
 scenario = { clock: true, sources: true, duplicateSources: true };
 const clock = await events();
 assert.ok(clock.some(item => item.type === 'tool-output-available' && item.output.strefa === 'Europe/Warsaw'));
