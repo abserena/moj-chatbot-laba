@@ -1,5 +1,27 @@
 # Mój chatbot
 
+## Wyszukiwanie i źródła
+
+Zwykły czat udostępnia narzędzie `openrouter.tools.webSearch` z `maxResults: 3`
+i `engine: "native"`. Model musi obsługiwać natywne wyszukiwanie (np. Google
+Search w zgodnym modelu Gemini). AI SDK 6 używa `stepCountIs`, importowanego
+jako `isStepCount`; limit to 5 kroków. Otrzymane od dostawcy źródła są przesyłane
+przez `toUIMessageStream({ sendSources: true })` i wyświetlane pod odpowiedzią
+z czasem ich otrzymania w strefie Europe/Dublin. Linki tekstowe wymyślone przez
+model nie są traktowane jako potwierdzone źródła.
+
+Błędy OpenRouter mają osobne komunikaty dla kodów 400/422 (parametry),
+401 (autoryzacja klucza), 402 (środki/budżet), 403 (blokada dostępu),
+404 (model/dostawca), 408/504 (czas), 429 (limit) i 5xx (awaria dostawcy).
+Log serwera zawiera tylko `event: openrouter_error` oraz status, bez sekretów
+i treści rozmowy. Testy używają fikcyjnych danych i nie odczytują `.env.local`.
+
+Po opublikowaniu na Vercel: odśwież stronę, wybierz „Zwykły czat” i zapytaj
+„Jaki jest dziś kurs euro według NBP? Podaj źródło.” Sprawdź listę „Źródła”,
+czas pobrania i treść strony po kliknięciu odsyłacza. Wyślij kolejne pytanie,
+aby sprawdzić historię zawierającą źródła. Brak sesji nadal zwraca 401 przed
+jakimkolwiek wywołaniem modelu.
+
 ## Konfiguracja lokalna
 
 W `.env.local` ustaw `CHAT_PASSWORD` na własne, długie hasło warsztatowe.

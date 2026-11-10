@@ -104,6 +104,19 @@ function ChatPanel({ mode, active }: { mode: Mode; active: boolean }) {
               if (part.type === "data-analysis") return <AnalysisResult key={index} result={part.data} />;
               return part.type === "text" ? <span key={index}>{part.text}</span> : null;
             })}
+            {item.role === "assistant" && item.parts.some((part) => part.type === "source-url" && /^https?:\/\//i.test(part.url)) && (
+              <section aria-label="Źródła">
+                <strong>Źródła</strong>
+                <ul>
+                  {item.parts.filter((part) => part.type === "source-url" && /^https?:\/\//i.test(part.url)).map((part, index) => part.type === "source-url" && (
+                    <li key={`${part.sourceId}-${index}`}>
+                      <a href={part.url} target="_blank" rel="noopener noreferrer">{part.title || part.url}</a>
+                    </li>
+                  ))}
+                </ul>
+                {item.metadata?.fetchedAt && <small>pobrano: <time dateTime={item.metadata.fetchedAt}>{new Date(item.metadata.fetchedAt).toLocaleString("pl-PL", { timeZone: "Europe/Dublin", dateStyle: "short", timeStyle: "short" })}</time> (Europe/Dublin)</small>}
+              </section>
+            )}
           </div>
         ))}
       </section>

@@ -9,7 +9,7 @@ export type StudioNovaResult = {
   needs_review: boolean;
 };
 
-export type StudioNovaMessage = UIMessage<unknown, { preview: { delta: string }; analysis: StudioNovaResult }>;
+export type StudioNovaMessage = UIMessage<{ fetchedAt?: string }, { preview: { delta: string }; analysis: StudioNovaResult }>;
 
 export const studioNovaFacts = { consultationPricePLN: 150, consultationMinutes: 45 } as const;
 
@@ -79,6 +79,30 @@ export function hasRefusal(value: unknown): boolean {
   });
 }
 
+export function openRouterErrorStatus(error: unknown): number | undefined {
+  if (APICallError.isInstance(error)) return error.statusCode;
+  // Niektóre błędy przychodzą już po rozpoczęciu strumienia jako obiekt z kodem.
+  if (error && typeof error === "object" && "code" in error && typeof error.code === "number") return error.code;
+  return undefined;
+}
+
+export function openRouterErrorMessage(error: unknown): string {
+  const status = openRouterErrorStatus(error);
+  switch (status) {
+    case 400:
+    case 422: return `OpenRouter (${status}): model lub dostawca nie przyjął parametrów żądania. Sprawdź, czy obsługuje wymagane funkcje, w tym wyszukiwanie native w zwykłym czacie.`;
+    case 401: return "OpenRouter (401): nieprawidłowy lub nieaktywny klucz API. Sprawdź OPENROUTER_API_KEY w ustawieniach Vercel i wykonaj nowe wdrożenie.";
+    case 402: return "OpenRouter (402): brak dostępnych środków lub przekroczony budżet żądania. Sprawdź saldo i limity konta OpenRouter.";
+    case 403: return "OpenRouter (403): dostęp do modelu lub żądania został zablokowany. Sprawdź uprawnienia klucza i zasady dostawcy.";
+    case 404: return "OpenRouter (404): model lub zgodny dostawca nie jest dostępny. Sprawdź OPENROUTER_MODEL w ustawieniach Vercel.";
+    case 408:
+    case 504: return `OpenRouter (${status}): przekroczono czas oczekiwania. Spróbuj ponownie za chwilę.`;
+    case 429: return "OpenRouter (429): przekroczono limit zapytań. Poczekaj chwilę i spróbuj ponownie.";
+  }
+  if (status && status >= 500 && status <= 599) return `OpenRouter (${status}): chwilowy błąd dostawcy modelu. Spróbuj ponownie za chwilę.`;
+  return "Nie udało się połączyć z modelem lub odczytać odpowiedzi OpenRouter. Spróbuj ponownie; jeśli błąd wraca, sprawdź logi aplikacji na Vercel.";
+}
+
 export function resultErrorMessage(error: unknown): string {
   if (error instanceof ResultError) {
     switch (error.code) {
@@ -97,5 +121,6 @@ export function resultErrorMessage(error: unknown): string {
   }
   if (error instanceof Error && error.name === "AbortError") return resultErrorMessage(new ResultError("aborted"));
   if (NoObjectGeneratedError.isInstance(error)) return resultErrorMessage(new ResultError("format"));
+  if (openRouterErrorStatus(error) !== undefined) return openRouterErrorMessage(error);
   return "Nie udało się uzyskać wyniku. Sprawdź konfigurację, dostępność modelu obsługującego JSON Schema i saldo OpenRouter, a następnie spróbuj ponownie.";
 }

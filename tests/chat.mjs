@@ -14,6 +14,7 @@ let scenario = {};
 let authAllowed = true;
 let originAllowed = true;
 const requests = [];
+const errorLogs = [];
 async function fakeFetch(_url, options) {
   const request = JSON.parse(options.body);
   requests.push(request);
@@ -25,12 +26,15 @@ async function fakeFetch(_url, options) {
     assert.equal(request.response_format.json_schema.schema.additionalProperties, false);
     assert.deepEqual(request.response_format.json_schema.schema.required, ['category', 'priority', 'draft', 'needs_review']);
     assert.equal(request.provider.require_parameters, true);
+    assert.equal(request.tools, undefined, 'Analiza pozostaje bez wyszukiwania');
+  } else {
+    assert.deepEqual(request.tools, [{ type: 'openrouter:web_search', max_results: 3, engine: 'native' }]);
   }
   assert.equal(request.messages[0].role, 'system');
   assert.match(JSON.stringify(request.messages[0].content), /Studio Nova/);
   assert.equal(request.messages.at(-1).role, 'user');
   if (scenario.unsupportedProvider) return Response.json({ error: { message: 'No endpoints found that support response_format json_schema', code: 404 } }, { status: 404 });
-  if (scenario.httpError) return Response.json({ error: { message: 'private-provider-detail', code: 400 } }, { status: 400 });
+  if (scenario.httpError) return Response.json({ error: { message: 'private-provider-detail', code: scenario.httpStatus ?? 400 } }, { status: scenario.httpStatus ?? 400 });
   const chunk = (delta, finish_reason = null) => ({ id: 'mock', model: 'test/model', choices: [{ index: 0, delta, finish_reason }] });
   const text = scenario.text ?? (request.response_format ? JSON.stringify(valid) : 'Konsultacja trwa 45 minut i kosztuje 150 zł brutto.');
   const middle = Math.floor(text.length / 2);
@@ -38,6 +42,7 @@ async function fakeFetch(_url, options) {
     ...(scenario.refusal ? [chunk({ refusal: 'private-provider-detail' })] : []),
     chunk({ role: 'assistant', content: text.slice(0, middle) }),
     chunk({ content: text.slice(middle) }),
+    ...(scenario.sources ? [chunk({ annotations: [{ type: 'url_citation', url_citation: { url: 'https://nbp.pl/', title: 'Narodowy Bank Polski', start_index: 0, end_index: text.length } }] })] : []),
     ...(scenario.streamError ? [{ error: { code: 500, message: 'private-provider-detail' } }] : []),
     ...(!scenario.missingFinish ? [chunk({}, scenario.finish ?? 'stop')] : []),
   ];
@@ -48,11 +53,11 @@ async function fakeFetch(_url, options) {
 function moduleCode(path, names) {
   const source = readFileSync(new URL(path, import.meta.url), 'utf8');
   return stripTypeScriptTypes(source)
-    .replace(/import \{([^}]+)\} from "([^"]+)";/g, (_, imports, id) => `const {${imports}} = require(${JSON.stringify(id)});`)
+    .replace(/import \{([^}]+)\} from "([^"]+)";/g, (_, imports, id) => `const {${imports.replace(/\bas\b/g, ':')}} = require(${JSON.stringify(id)});`)
     .replace(/\bexport /g, '') + `\nmodule.exports = {${names.join(',')}};`;
 }
 const schemaModule = { exports: {} };
-vm.runInNewContext(moduleCode('../app/lib/result-schema.ts', ['assertAnalysisPolicy', 'resultSchema', 'ResultError', 'hasRefusal', 'resultErrorMessage', 'studioNovaFacts']), {
+vm.runInNewContext(moduleCode('../app/lib/result-schema.ts', ['assertAnalysisPolicy', 'resultSchema', 'ResultError', 'hasRefusal', 'openRouterErrorMessage', 'openRouterErrorStatus', 'resultErrorMessage', 'studioNovaFacts']), {
   module: schemaModule, Error,
   require(id) {
     if (id === 'ai') return ai;
@@ -73,6 +78,7 @@ async function fakeCatalogFetch(url, options) {
 const module = { exports: {} };
 vm.runInNewContext(moduleCode('../app/api/chat/route.ts', ['POST', 'GET']), {
   module, Request, Response, Error,
+  console: { error: line => errorLogs.push(JSON.parse(line)) },
   process: { env: fakeEnv },
   require(id) {
     if (id === '../../lib/auth.server') return { requestHasSession: () => authAllowed, sameOrigin: () => originAllowed };
@@ -135,8 +141,8 @@ for (const [settings, expected] of [
   [{ missingFinish: true }, /przerwane/],
   [{ missingFinish: true, text: '{"category":"sales","priority":' }, /przerwane/],
   [{ unsupportedProvider: true }, /OPENROUTER_MODEL/],
-  [{ httpError: true }, /Nie udało się uzyskać wyniku/],
-  [{ streamError: true }, /Nie udało się uzyskać wyniku/],
+  [{ httpError: true }, /OpenRouter \(400\)/],
+  [{ streamError: true }, /OpenRouter|Nie udało się uzyskać wyniku/],
 ]) {
   scenario = settings;
   const parts = await events();
@@ -163,6 +169,26 @@ for (const settings of [{ unsupported: true }, { missingModel: true }, { catalog
   assert.ok(normal.some(part => part.type === 'text-delta'));
   assert.equal(requests.at(-1).response_format, undefined, 'Zwykły czat nie wymaga JSON');
   assert.equal(catalogRequests, metadataBefore, 'Zwykły czat nie zależy od katalogu');
+}
+scenario = { sources: true };
+const sourcedEvents = await events([user], 'chat');
+assert.ok(sourcedEvents.some(part => part.type === 'source-url' && part.url === 'https://nbp.pl/' && part.title === 'Narodowy Bank Polski'));
+const fetchedAt = sourcedEvents.find(part => part.type === 'message-metadata')?.messageMetadata.fetchedAt;
+assert.ok(Number.isFinite(Date.parse(fetchedAt)), 'Czas otrzymania źródeł pochodzi z serwera');
+const historyWithSource = { id: 'web-answer', role: 'assistant', metadata: { fetchedAt }, parts: [
+  { type: 'text', text: 'Odpowiedź ze źródłem' },
+  { type: 'source-url', sourceId: 'nbp', url: 'https://nbp.pl/', title: 'Narodowy Bank Polski' },
+] };
+assert.ok((await events([user, historyWithSource, text('follow-up', 'user', 'Podaj więcej informacji')], 'chat')).some(part => part.type === 'source-url'));
+scenario = {};
+for (const [httpStatus, expected] of [[400, /parametrów/], [401, /klucz API/], [402, /budżet/], [403, /zablokowany/], [404, /nie jest dostępny/], [429, /limit zapytań/], [503, /błąd dostawcy/]]) {
+  scenario = { httpError: true, httpStatus };
+  const parts = await events([user], 'chat');
+  const failure = parts.find(part => part.type === 'error');
+  assert.ok(failure, `Czytelny błąd ${httpStatus}`);
+  assert.match(failure.errorText, expected);
+  assert.ok(failure.errorText.includes(String(httpStatus)));
+  assert.equal(JSON.stringify(parts).includes(fakeEnv.OPENROUTER_API_KEY), false, 'Bez klucza w odpowiedzi');
 }
 scenario = {};
 const defaultResponse = await module.exports.POST(new Request('http://localhost/api/chat', {
@@ -203,6 +229,7 @@ for (const draft of ['Cena 150 zł brutto.', 'Cena 150,00 PLN.', 'Cena PLN 150.'
 }
 authAllowed = false;
 assert.equal((await post()).status, 401);
+assert.equal((await post([user], 'chat')).status, 401);
 assert.equal((await module.exports.GET(new Request('http://localhost/api/chat'))).status, 401);
 authAllowed = true;
 originAllowed = false;
@@ -211,5 +238,11 @@ originAllowed = true;
 fakeEnv.OPENROUTER_API_KEY = '';
 assert.equal((await post()).status, 503);
 assert.equal(requests.length, callsBeforeInvalid);
+assert.ok(errorLogs.length > 0);
+for (const entry of errorLogs) {
+  assert.deepEqual(Object.keys(entry).sort(), ['event', 'status']);
+  assert.equal(entry.event, 'openrouter_error');
+  assert.ok(typeof entry.status === 'number' || entry.status === 'unknown');
+}
 console.table(audit);
 console.log('OK: osobne tryby czatu i analizy, JSON Schema, walidacja, streaming, historia, odmowa, ucięcie/przerwanie, błędy HTTP/formatu, możliwości modelu, brak fallbacku i 401/403/503. Wyłącznie lokalne atrapy HTTP.');
